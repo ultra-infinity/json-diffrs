@@ -8,11 +8,60 @@ pub enum WrappedValue<'a> {
     Value(DiffNode<'a>),
 }
 
+impl<'a> WrappedValue<'a> {
+    pub fn status(&self) -> NodeStatus {
+        match self {
+            WrappedValue::Value(node) => node.status,
+            WrappedValue::Object(map) => {
+                if map.is_empty() {
+                    NodeStatus::Unchanged
+                } else {
+                    // Accumulate the status of all children
+                    map.values()
+                        .map(|v| v.status())
+                        .fold(NodeStatus::Unchanged, |acc, s| acc.combine(s))
+                }
+            }
+            WrappedValue::Array(vec) => {
+                if vec.is_empty() {
+                    NodeStatus::Unchanged
+                } else {
+                    // Accumulate the status of all elements
+                    vec.iter()
+                        .map(|v| v.status())
+                        .fold(NodeStatus::Unchanged, |acc, s| acc.combine(s))
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeStatus {
     Unchanged,
     Modified,
     Added,
     Deleted,
+}
+
+impl NodeStatus {
+    // Combines two statuses to determine parent status
+    fn combine(self, other: Self) -> Self {
+        match (self, other) {
+            // If anything is modified, or if we mix additions and deletions, it's Modified
+            (NodeStatus::Modified, _) | (_, NodeStatus::Modified) => NodeStatus::Modified,
+            (NodeStatus::Added, NodeStatus::Deleted) | (NodeStatus::Deleted, NodeStatus::Added) => {
+                NodeStatus::Modified
+            }
+
+            // If they match, keep it
+            (NodeStatus::Added, NodeStatus::Added) => NodeStatus::Added,
+            (NodeStatus::Deleted, NodeStatus::Deleted) => NodeStatus::Deleted,
+
+            // Unchanged yields to structural changes
+            (NodeStatus::Unchanged, structural) | (structural, NodeStatus::Unchanged) => structural,
+        }
+    }
 }
 
 pub struct DiffNode<'a> {
@@ -33,11 +82,60 @@ fn gen_diff_object<'a>(
     old_object: &'a Map<String, Value>,
     new_object: &'a Map<String, Value>,
 ) -> WrappedValue<'a> {
-    unimplemented!()
+    let old_keys = old_object.keys();
+    let new_keys = new_object.keys();
+
+    let keys: BTreeSet<_> = old_keys.chain(new_keys).collect();
+
+    let mut map = BTreeMap::new();
+    for key in keys {
+        let old_value = old_object.get(key);
+        let new_value = new_object.get(key);
+
+        let value = match (old_value, new_value) {
+            (Some(old_value), Some(new_value)) => gen_diff_value(old_value, new_value),
+            (Some(old_value), None) => WrappedValue::Value(DiffNode {
+                value: old_value,
+                status: NodeStatus::Deleted,
+            }),
+            (None, Some(new_value)) => WrappedValue::Value(DiffNode {
+                value: new_value,
+                status: NodeStatus::Added,
+            }),
+            (None, None) => unreachable!(),
+        };
+
+        map.insert(key.clone(), value);
+    }
+
+    WrappedValue::Object(map)
 }
 
 fn gen_diff_array<'a>(old_array: &'a Vec<Value>, new_array: &'a Vec<Value>) -> WrappedValue<'a> {
-    unimplemented!()
+    let max_len = std::cmp::max(old_array.len(), new_array.len());
+    let mut array = Vec::new();
+
+    for i in 0..max_len {
+        let old_value = old_array.get(i);
+        let new_value = new_array.get(i);
+
+        let value = match (old_value, new_value) {
+            (Some(old_value), Some(new_value)) => gen_diff_value(old_value, new_value),
+            (Some(old_value), None) => WrappedValue::Value(DiffNode {
+                value: old_value,
+                status: NodeStatus::Deleted,
+            }),
+            (None, Some(new_value)) => WrappedValue::Value(DiffNode {
+                value: new_value,
+                status: NodeStatus::Added,
+            }),
+            (None, None) => unreachable!(),
+        };
+
+        array.push(value);
+    }
+
+    WrappedValue::Array(array)
 }
 
 fn gen_diff_value<'a>(old_value: &'a Value, new_value: &'a Value) -> WrappedValue<'a> {
@@ -74,7 +172,7 @@ fn gen_diff_value<'a>(old_value: &'a Value, new_value: &'a Value) -> WrappedValu
             value: old_value,
             status: NodeStatus::Unchanged,
         }),
-        (value, _) => WrappedValue::Value(DiffNode {
+        (_, value) => WrappedValue::Value(DiffNode {
             value,
             status: NodeStatus::Modified,
         }),
