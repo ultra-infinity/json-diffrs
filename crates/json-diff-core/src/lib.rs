@@ -1,17 +1,24 @@
-use std::collections::{BTreeMap, BTreeSet};
-
+use egui_json_tree::pointer::JsonPointerSegment;
+use egui_json_tree::value::BaseValueType;
+use egui_json_tree::value::ExpandableType;
+use egui_json_tree::value::JsonTreeValue;
+use egui_json_tree::value::ToJsonTreeValue;
 use serde_json::{Map, Value};
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Debug;
+use std::fmt::Display;
 
+#[derive(Debug)]
 pub enum WrappedValue<'a> {
     Object(BTreeMap<String, WrappedValue<'a>>),
     Array(Vec<WrappedValue<'a>>),
-    Value(DiffNode<'a>),
+    Base(DiffNode<'a>),
 }
 
 impl<'a> WrappedValue<'a> {
     pub fn status(&self) -> NodeStatus {
         match self {
-            WrappedValue::Value(node) => node.status,
+            WrappedValue::Base(node) => node.status,
             WrappedValue::Object(map) => {
                 if map.is_empty() {
                     NodeStatus::Unchanged
@@ -44,6 +51,20 @@ pub enum NodeStatus {
     Deleted,
 }
 
+impl Display for NodeStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use NodeStatus::*;
+        let text = match self {
+            Unchanged => "unchanged",
+            Modified => "modified",
+            Added => "added",
+            Deleted => "deleted",
+        };
+
+        f.write_str(text)
+    }
+}
+
 impl NodeStatus {
     // Combines two statuses to determine parent status
     fn combine(self, other: Self) -> Self {
@@ -64,9 +85,17 @@ impl NodeStatus {
     }
 }
 
+#[derive(Debug)]
 pub struct DiffNode<'a> {
     pub value: &'a Value,
     pub status: NodeStatus,
+}
+
+impl<'a> Display for DiffNode<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Display::fmt(self.value, f)?;
+        Display::fmt(&self.status, f)
+    }
 }
 
 impl<'a> From<&'a Value> for DiffNode<'a> {
@@ -94,11 +123,11 @@ fn gen_diff_object<'a>(
 
         let value = match (old_value, new_value) {
             (Some(old_value), Some(new_value)) => gen_diff_value(old_value, new_value),
-            (Some(old_value), None) => WrappedValue::Value(DiffNode {
+            (Some(old_value), None) => WrappedValue::Base(DiffNode {
                 value: old_value,
                 status: NodeStatus::Deleted,
             }),
-            (None, Some(new_value)) => WrappedValue::Value(DiffNode {
+            (None, Some(new_value)) => WrappedValue::Base(DiffNode {
                 value: new_value,
                 status: NodeStatus::Added,
             }),
@@ -121,11 +150,11 @@ fn gen_diff_array<'a>(old_array: &'a Vec<Value>, new_array: &'a Vec<Value>) -> W
 
         let value = match (old_value, new_value) {
             (Some(old_value), Some(new_value)) => gen_diff_value(old_value, new_value),
-            (Some(old_value), None) => WrappedValue::Value(DiffNode {
+            (Some(old_value), None) => WrappedValue::Base(DiffNode {
                 value: old_value,
                 status: NodeStatus::Deleted,
             }),
-            (None, Some(new_value)) => WrappedValue::Value(DiffNode {
+            (None, Some(new_value)) => WrappedValue::Base(DiffNode {
                 value: new_value,
                 status: NodeStatus::Added,
             }),
@@ -150,7 +179,7 @@ fn gen_diff_value<'a>(old_value: &'a Value, new_value: &'a Value) -> WrappedValu
                 diff_node.status = NodeStatus::Modified;
             }
 
-            WrappedValue::Value(diff_node)
+            WrappedValue::Base(diff_node)
         }
         (Value::Number(old_number), Value::Number(new_number)) => {
             let mut diff_node = DiffNode::from(new_value);
@@ -158,7 +187,7 @@ fn gen_diff_value<'a>(old_value: &'a Value, new_value: &'a Value) -> WrappedValu
                 diff_node.status = NodeStatus::Modified;
             }
 
-            WrappedValue::Value(diff_node)
+            WrappedValue::Base(diff_node)
         }
         (Value::String(old_string), Value::String(new_string)) => {
             let mut diff_node = DiffNode::from(new_value);
@@ -166,13 +195,13 @@ fn gen_diff_value<'a>(old_value: &'a Value, new_value: &'a Value) -> WrappedValu
                 diff_node.status = NodeStatus::Modified;
             }
 
-            WrappedValue::Value(diff_node)
+            WrappedValue::Base(diff_node)
         }
-        (Value::Null, Value::Null) => WrappedValue::Value(DiffNode {
+        (Value::Null, Value::Null) => WrappedValue::Base(DiffNode {
             value: old_value,
             status: NodeStatus::Unchanged,
         }),
-        (_, value) => WrappedValue::Value(DiffNode {
+        (_, value) => WrappedValue::Base(DiffNode {
             value,
             status: NodeStatus::Modified,
         }),
@@ -182,7 +211,7 @@ fn gen_diff_value<'a>(old_value: &'a Value, new_value: &'a Value) -> WrappedValu
 pub fn gen_diff_json<'a>(
     old_json: &'a BTreeMap<String, Value>,
     new_json: &'a BTreeMap<String, Value>,
-) -> BTreeMap<String, WrappedValue<'a>> {
+) -> WrappedValue<'a> {
     let old_keys = old_json.keys().into_iter();
     let new_keys = new_json.keys().into_iter();
     let mut map = BTreeMap::new();
@@ -194,11 +223,11 @@ pub fn gen_diff_json<'a>(
 
         let value = match (old_val, new_val) {
             (Some(old_val), Some(new_val)) => gen_diff_value(old_val, new_val),
-            (Some(value), None) => WrappedValue::Value(DiffNode {
+            (Some(value), None) => WrappedValue::Base(DiffNode {
                 value,
                 status: NodeStatus::Deleted,
             }),
-            (None, Some(value)) => WrappedValue::Value(DiffNode {
+            (None, Some(value)) => WrappedValue::Base(DiffNode {
                 value,
                 status: NodeStatus::Added,
             }),
@@ -208,5 +237,53 @@ pub fn gen_diff_json<'a>(
         map.insert(key.clone(), value);
     }
 
-    map
+    WrappedValue::Object(map)
+}
+
+impl<'a> ToJsonTreeValue for WrappedValue<'a> {
+    fn to_json_tree_value(&self) -> JsonTreeValue<'_, Self> {
+        use WrappedValue::*;
+        match self {
+            Object(obj) => {
+                let mut res = Vec::new();
+                let expandable_type = ExpandableType::Object;
+
+                for (key, value) in obj {
+                    let pointer_segment = JsonPointerSegment::Key(key);
+                    res.push((pointer_segment, value));
+                }
+
+                JsonTreeValue::Expandable(res, expandable_type)
+            }
+            Array(array) => {
+                let mut res = Vec::new();
+                let expandable_type = ExpandableType::Object;
+
+                for (index, value) in array.iter().enumerate() {
+                    let pointer_segment = JsonPointerSegment::Index(index);
+                    res.push((pointer_segment, value));
+                }
+
+                JsonTreeValue::Expandable(res, expandable_type)
+            }
+            Base(node) => {
+                let DiffNode { value, .. } = node;
+                match value {
+                    Value::Null => JsonTreeValue::Base(self, value, BaseValueType::Null),
+                    Value::Bool(value) => JsonTreeValue::Base(self, value, BaseValueType::Bool),
+                    Value::Number(number) => {
+                        JsonTreeValue::Base(self, number, BaseValueType::Number)
+                    }
+                    Value::String(string) => {
+                        JsonTreeValue::Base(self, string, BaseValueType::String)
+                    }
+                    Value::Array(_) | Value::Object(_) => unreachable!(),
+                }
+            }
+        }
+    }
+
+    fn is_expandable(&self) -> bool {
+        matches!(self, WrappedValue::Object(_) | WrappedValue::Array(_))
+    }
 }
