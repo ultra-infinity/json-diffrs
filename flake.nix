@@ -29,8 +29,39 @@
 
         # For `nix develop`:
         devShell = pkgs.mkShell {
+        buildInputs = with pkgs; [
+            # X11 Dependencies
+            libX11
+            libXcursor
+            libXrandr
+            libXi
+            
+            # Wayland Dependencies
+            wayland
+            libxkbcommon
+            
+            # Graphics
+            libGL
+          ];
+
+          XKB_CONFIG_ROOT = "${pkgs.xkeyboard_config}/share/X11/xkb";
+          shellHook = ''
+            export LC_ALL=C.UTF-8
+          '';
+
+          # This environment variable forces winit/eframe to know where the libraries are
+          LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath (with pkgs; [
+            libX11
+            libXcursor
+            libXrandr
+            libXi
+            wayland
+            libxkbcommon
+            libGL
+          ]);
           nativeBuildInputs = with pkgs; [ rust-bin.beta.latest.default rust-analyzer ];
         };
       }
+     
     );
 }
