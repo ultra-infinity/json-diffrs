@@ -208,9 +208,18 @@ fn gen_diff_value<'a>(old_value: &'a Value, new_value: &'a Value) -> WrappedValu
     }
 }
 
-pub fn gen_diff_json<'a>(
-    old_json: &'a BTreeMap<String, Value>,
-    new_json: &'a BTreeMap<String, Value>,
+fn gen_diff<'a>(old_json: &'a Value, new_json: &'a Value) -> WrappedValue<'a> {
+    match (old_json, new_json) {
+        (Value::Object(old_object), Value::Object(new_object)) => {
+            gen_diff_json(old_object, new_object)
+        }
+        _ => unreachable!(),
+    }
+}
+
+fn gen_diff_json<'a>(
+    old_json: &'a Map<String, Value>,
+    new_json: &'a Map<String, Value>,
 ) -> WrappedValue<'a> {
     let old_keys = old_json.keys().into_iter();
     let new_keys = new_json.keys().into_iter();
@@ -238,6 +247,14 @@ pub fn gen_diff_json<'a>(
     }
 
     WrappedValue::Object(map)
+}
+
+impl<'a> From<(&'a Value, &'a Value)> for WrappedValue<'a> {
+    fn from(value: (&'a Value, &'a Value)) -> Self {
+        let (old_json, new_json) = value;
+
+        gen_diff(old_json, new_json)
+    }
 }
 
 impl<'a> ToJsonTreeValue for WrappedValue<'a> {

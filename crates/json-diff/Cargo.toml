@@ -10,3 +10,4 @@ eframe = "0.34.3"
 json-diff-core = { path = "../json-diff-core" }
 anyhow = "1"
 egui_json_tree = { version =  "0.15.0", features = ["serde_json"] }
+egui_dock = "0.19.1"

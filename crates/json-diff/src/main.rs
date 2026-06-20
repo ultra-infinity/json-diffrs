@@ -1,16 +1,74 @@
-use anyhow::Error;
-use eframe::egui::{self, Button, CollapsingHeader, RichText, TextEdit, WidgetText};
+use eframe::egui::{self, WidgetText, WidgetWithState};
 use egui::{Color32, Ui, Widget};
-use egui_json_tree::{
-    JsonTree,
-    value::{JsonTreeValue, ToJsonTreeValue},
-};
+use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
+use egui_json_tree::{DefaultExpand, JsonTree};
 use json_diff_core::*;
 use serde_json::{Value, json};
-use std::{
-    collections::BTreeMap,
-    ops::{Deref, DerefMut},
-};
+use std::marker::PhantomData;
+
+enum JsonState<'a> {
+    Json(&'a Value),
+    Diff(WrappedValue<'a>),
+}
+
+struct JsonDiffTab<'a, T>(PhantomData<&'a T>);
+
+impl<'a, T> JsonDiffTab<'a, T> {
+    pub fn new() -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<'a> TabViewer for JsonDiffTab<'a, JsonState<'a>> {
+    type Tab = JsonState<'a>;
+
+    fn title(&mut self, tab: &mut Self::Tab) -> WidgetText {
+        match tab {
+            JsonState::Json(_) => "Json Tab".into(),
+            JsonState::Diff(_) => "Diff Tab".into(),
+        }
+    }
+
+    fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
+        match tab {
+            JsonState::Json(json) => JsonTree::new("Json Tree", *json)
+                .default_expand(DefaultExpand::ToLevel(0))
+                .show(ui),
+            JsonState::Diff(diff) => JsonTree::new("Diff Tree", diff)
+                .default_expand(DefaultExpand::ToLevel(0))
+                .show(ui),
+        };
+    }
+}
+
+struct Tabs<'a, T> {
+    dock_state: DockState<T>,
+    phantom: PhantomData<&'a T>,
+}
+
+impl<'a> WidgetWithState for Tabs<'a, WrappedValue<'a>> {
+    type State = DockState<WrappedValue<'a>>;
+}
+
+impl<'a> WidgetWithState for Tabs<'a, &'a Value> {
+    type State = DockState<&'a Value>;
+}
+impl<'a, T> Tabs<'a, T> {
+    pub fn new(dock_state: DockState<T>) -> Self {
+        Self {
+            dock_state,
+            phantom: PhantomData,
+        }
+    }
+}
+
+impl<'a> Widget for Tabs<'a, JsonState<'a>> {
+    fn ui(mut self, ui: &mut Ui) -> egui::Response {
+        let mut diff_tab = JsonDiffTab::new();
+        DockArea::new(&mut self.dock_state).show_inside(ui, &mut diff_tab);
+        ui.response()
+    }
+}
 
 // Map the structural status to your exact requested colors
 fn status_color(status: &NodeStatus) -> Color32 {
@@ -24,10 +82,8 @@ fn status_color(status: &NodeStatus) -> Color32 {
 
 #[derive(Default)]
 struct MyEguiApp {
-    old_json: BTreeMap<String, Value>,
-    new_json: BTreeMap<String, Value>,
-    err_left: Option<Error>,
-    err_right: Option<Error>,
+    old_json: Value,
+    new_json: Value,
 }
 
 impl MyEguiApp {
@@ -50,8 +106,17 @@ impl eframe::App for MyEguiApp {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        let diff = gen_diff_json(&self.old_json, &self.new_json);
-        JsonTree::new("Diff Tree", &diff).show(ui);
+        let diff = WrappedValue::from((&self.old_json, &self.new_json));
+
+        let old = JsonState::Json(&self.old_json);
+        let diff = JsonState::Diff(diff);
+
+        let mut dock_state = DockState::new(vec![old]);
+        let surface = dock_state.main_surface_mut();
+
+        surface.split_right(NodeIndex::root(), 0.50, vec![diff]);
+
+        ui.add(Tabs::new(dock_state));
     }
 }
 
