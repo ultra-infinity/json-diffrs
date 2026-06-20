@@ -9,65 +9,6 @@ use serde_json::{Value, json};
 use std::{any::Any, marker::PhantomData};
 use ui::*;
 
-struct JsonDiffTab<'a, T>(PhantomData<&'a T>);
-
-impl<'a, T> JsonDiffTab<'a, T> {
-    pub fn new() -> Self {
-        Self(PhantomData)
-    }
-}
-
-impl<'a> TabViewer for JsonDiffTab<'a, JsonState<'a>> {
-    type Tab = JsonState<'a>;
-
-    fn title(&mut self, tab: &mut Self::Tab) -> WidgetText {
-        match tab {
-            JsonState::Json(_) => "Json Tab".into(),
-            JsonState::Diff(_) => "Diff Tab".into(),
-        }
-    }
-
-    fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
-        match tab {
-            JsonState::Json(json) => JsonTree::new("Json Tree", *json)
-                .default_expand(DefaultExpand::ToLevel(0))
-                .show(ui),
-            JsonState::Diff(diff) => JsonTree::new("Diff Tree", diff)
-                .default_expand(DefaultExpand::ToLevel(0))
-                .show(ui),
-        };
-    }
-}
-
-struct Tabs<'a, T> {
-    dock_state: DockState<T>,
-    phantom: PhantomData<&'a T>,
-}
-
-impl<'a> WidgetWithState for Tabs<'a, WrappedValue<'a>> {
-    type State = DockState<WrappedValue<'a>>;
-}
-
-impl<'a> WidgetWithState for Tabs<'a, &'a Value> {
-    type State = DockState<&'a Value>;
-}
-impl<'a, T> Tabs<'a, T> {
-    pub fn new(dock_state: DockState<T>) -> Self {
-        Self {
-            dock_state,
-            phantom: PhantomData,
-        }
-    }
-}
-
-impl<'a> Widget for Tabs<'a, JsonState<'a>> {
-    fn ui(mut self, ui: &mut Ui) -> egui::Response {
-        let mut diff_tab = JsonDiffTab::new();
-        DockArea::new(&mut self.dock_state).show_inside(ui, &mut diff_tab);
-        ui.response()
-    }
-}
-
 // Map the structural status to your exact requested colors
 fn status_color(status: &NodeStatus) -> Color32 {
     match status {
@@ -143,16 +84,6 @@ impl eframe::App for JsonDiffrsApp {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        egui::Panel::bottom("Footer").show_inside(ui, |ui| {
-            ui.spacing();
-            match self.err.take() {
-                Some(e) => {
-                    let text = RichText::new(e.to_string()).color(Color32::RED);
-                    ui.label(text)
-                }
-                _ => ui.label("Everything is fine"),
-            };
-        });
         egui::Panel::top("Header").show_inside(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("File", |ui| {
