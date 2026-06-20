@@ -1,15 +1,13 @@
-use eframe::egui::{self, WidgetText, WidgetWithState};
+mod ui;
+use anyhow::Error;
+use eframe::egui::{self, Layout, RichText, WidgetText, WidgetWithState};
 use egui::{Color32, Ui, Widget};
 use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
 use egui_json_tree::{DefaultExpand, JsonTree};
 use json_diff_core::*;
 use serde_json::{Value, json};
-use std::marker::PhantomData;
-
-enum JsonState<'a> {
-    Json(&'a Value),
-    Diff(WrappedValue<'a>),
-}
+use std::{any::Any, marker::PhantomData};
+use ui::*;
 
 struct JsonDiffTab<'a, T>(PhantomData<&'a T>);
 
@@ -80,43 +78,110 @@ fn status_color(status: &NodeStatus) -> Color32 {
     }
 }
 
-#[derive(Default)]
-struct MyEguiApp {
-    old_json: Value,
-    new_json: Value,
+enum JsonDiffrsState {
+    ExitClicked,
+    New,
 }
 
-impl MyEguiApp {
-    fn new(_cc: &eframe::CreationContext<'_>) -> Self {
+impl Default for JsonDiffrsState {
+    fn default() -> Self {
+        JsonDiffrsState::New
+    }
+}
+
+struct JsonDiffrsApp {
+    old_json: Value,
+    new_json: Value,
+    err: Option<Error>,
+    zoom: f32,
+    state: JsonDiffrsState,
+}
+
+impl Default for JsonDiffrsApp {
+    fn default() -> Self {
+        let old_json = Value::default();
+        let new_json = Value::default();
+        let err = Option::default();
+        let zoom = 1.3;
+        let state = JsonDiffrsState::default();
+
+        Self {
+            old_json,
+            new_json,
+            err,
+            zoom,
+            state,
+        }
+    }
+}
+
+impl JsonDiffrsApp {
+    fn new(cc: &eframe::CreationContext<'_>) -> Self {
         // Customize egui here with cc.egui_ctx.set_fonts and cc.egui_ctx.set_global_style.
         // Restore app state using cc.storage (requires the "persistence" feature).
         // Use the cc.gl (a glow::Context) to create graphics shaders and buffers that you can use
         // for e.g. egui::PaintCallback.
+        cc.egui_ctx
+            .send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
+        cc.egui_ctx
+            .send_viewport_cmd(egui::ViewportCommand::Decorations(true));
         Self::default()
     }
 }
 
-impl eframe::App for MyEguiApp {
-    fn update(&mut self, _ctx: &egui::Context, _frame: &mut eframe::Frame) {
+impl eframe::App for JsonDiffrsApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if let JsonDiffrsState::ExitClicked = self.state {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
         let old_json = json!({ "foo": "bar", "fizz": [1, 2, 3]});
         let new_json = json!({ "foo": "baz", "fizz": [1, 2, 3]});
 
         self.new_json = serde_json::from_value(old_json).unwrap();
         self.old_json = serde_json::from_value(new_json).unwrap();
+        ctx.set_zoom_factor(self.zoom);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        let diff = WrappedValue::from((&self.old_json, &self.new_json));
+        egui::Panel::bottom("Footer").show_inside(ui, |ui| {
+            ui.spacing();
+            match self.err.take() {
+                Some(e) => {
+                    let text = RichText::new(e.to_string()).color(Color32::RED);
+                    ui.label(text)
+                }
+                _ => ui.label("Everything is fine"),
+            };
+        });
+        egui::Panel::top("Header").show_inside(ui, |ui| {
+            egui::MenuBar::new().ui(ui, |ui| {
+                ui.menu_button("File", |ui| {
+                    if ui.button("New").clicked() {}
+                    if ui.button("Exit").clicked() {
+                        self.state = JsonDiffrsState::ExitClicked;
+                    }
+                });
+                ui.menu_button("Zoom", |ui| {
+                    if ui.button("+").clicked() {
+                        self.zoom += 0.1;
+                    }
+                    if ui.button("-").clicked() {
+                        if self.zoom - 0.1 > 0.0000 {
+                            self.zoom -= 0.1;
+                        }
+                    }
+                })
+            });
+        });
+        egui::Panel::left("Left Panel").show_inside(ui, |ui| ui.label("AI Assist Incoming"));
 
-        let old = JsonState::Json(&self.old_json);
-        let diff = JsonState::Diff(diff);
-
-        let mut dock_state = DockState::new(vec![old]);
-        let surface = dock_state.main_surface_mut();
-
-        surface.split_right(NodeIndex::root(), 0.50, vec![diff]);
-
-        ui.add(Tabs::new(dock_state));
+        egui::CentralPanel::default().show_inside(ui, |ui| {
+            use JsonDiffrsState::*;
+            match self.state {
+                New => {}
+                _ => {}
+            }
+        });
     }
 }
 
@@ -125,7 +190,7 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "My egui App",
         native_options,
-        Box::new(|cc| Ok(Box::new(MyEguiApp::new(cc)))),
+        Box::new(|cc| Ok(Box::new(JsonDiffrsApp::new(cc)))),
     )?;
 
     Ok(())
