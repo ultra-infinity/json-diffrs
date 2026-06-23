@@ -1,66 +1,107 @@
 mod diff_view;
 mod json_input;
-use anyhow::Error;
-use eframe::{
-    egui::{self, TextEdit, WidgetText, WidgetWithState},
-    wgpu::naga::back::hlsl::Error::Unimplemented,
+use std::{
+    collections::HashMap,
+    marker::PhantomData,
+    ops::{Deref, DerefMut},
+    sync::{Arc, Mutex, RwLock},
 };
-use egui::{Color32, Ui, Widget};
-use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
-use egui_json_tree::{DefaultExpand, JsonTree};
+
+use anyhow::Error;
+pub use diff_view::CodeEditor;
+use eframe::egui::{self, Key::Colon, TextEdit, WidgetText};
+use egui::{Ui, Widget};
+use egui_dock::{DockArea, DockState, TabViewer};
 use json_diff_core::*;
 use serde_json::{Value, json};
-use std::marker::PhantomData;
 
+pub struct Entry<S> {
+    pub old: S,
+    pub new: S,
+}
+
+#[derive(Default)]
 pub struct AppContext {
-    pub err: Option<Error>,
+    pub input_strings: HashMap<String, Entry<String>>,
+    pub json_values: HashMap<String, Entry<Value>>,
 }
 
-pub trait AppWidget: Widget {
-    fn update(&mut self, ctx: &mut AppContext);
+#[derive(Clone, Default)]
+pub struct Ctx(Arc<RwLock<AppContext>>);
+
+impl Ctx {
+    pub fn new() -> Self {
+        Ctx(Arc::new(RwLock::new(AppContext::default())))
+    }
 }
 
-pub enum TabState<'a> {
-    Input(InputState<'a>),
-    Output(JsonState<'a>, JsonState<'a>),
+impl Deref for Ctx {
+    type Target = Arc<RwLock<AppContext>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
-pub enum JsonState<'a> {
-    Json(&'a Value),
-    Diff(WrappedValue<'a>),
-}
-
-pub struct JsonEntry<'a> {
-    name: String,
-    value: JsonState<'a>,
+impl DerefMut for Ctx {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
 }
 
 pub enum InputState<'a> {
-    Input((JsonEntry<'a>, JsonEntry<'a>)),
-    Error(Error),
+    Input(&'a mut String, &'a mut String),
+    Values(&'a Value, &'a Value),
 }
 
-pub struct InputTabView;
+pub struct MainView<'a> {
+    dock_state: DockState<InputState<'a>>,
+}
 
-impl TabViewer for InputTabView {
-    type Tab = (String, String);
+impl<'a> MainView<'a> {
+    pub fn new(input_strings: &'a mut HashMap<String, Entry<String>>) -> Self {
+        let dock_state = {
+            let tabs = input_strings
+                .iter_mut()
+                .map(|(old, entry)| InputState::Input(&mut entry.old, &mut entry.new))
+                .collect();
+            let dock_state = DockState::new(tabs);
+
+            dock_state
+        };
+        Self { dock_state }
+    }
+}
+
+impl<'a> Widget for MainView<'a> {
+    fn ui(mut self, ui: &mut Ui) -> egui::Response {
+        let mut tab_viewer = JsonTabViewer(PhantomData);
+        DockArea::new(&mut self.dock_state).show_inside(ui, &mut tab_viewer);
+        ui.response()
+    }
+}
+
+struct JsonTabViewer<'a>(PhantomData<&'a ()>);
+
+impl<'a> TabViewer for JsonTabViewer<'a> {
+    type Tab = InputState<'a>;
+
     fn title(&mut self, tab: &mut Self::Tab) -> WidgetText {
-        "New Json Comparison".into()
+        match tab {
+            InputState::Input(_, _) => "New Comparision".into(),
+            InputState::Values(_, _) => "Diff".into(),
+        }
     }
 
     fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
-        let (old_json_string, new_json_string) = tab;
-        ui.columns(2, |columns| {
-            columns[0].add(TextEdit::multiline(old_json_string));
-            columns[1].add(TextEdit::multiline(new_json_string));
-        });
-    }
-}
-
-pub struct Tabs;
-
-impl Widget for Tabs {
-    fn ui(self, ui: &mut Ui) -> egui::Response {
-        unimplemented!()
+        match tab {
+            InputState::Input(old, new) => {
+                ui.columns(2, |columns| {
+                    columns[0].add(CodeEditor::new(old));
+                    columns[1].add(CodeEditor::new(new));
+                });
+            }
+            _ => {}
+        }
     }
 }
