@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-serde_json = "1.0.0"
-serde = "1.0.0"
-thiserror = "2.0.0"
-egui = "0.34"
-egui_json_tree = { version =  "0.15.0", features = ["serde_json"] }
- 
+serde_json = { version = "1.0.0", features = ["preserve_order"] }
+serde = { version = "1.0.0", features = ["derive"] }
+similar = "3"
+
+[dev-dependencies]
+tempfile = "3"

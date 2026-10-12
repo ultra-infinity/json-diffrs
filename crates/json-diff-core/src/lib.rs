@@ -1,306 +1,250 @@
-use egui_json_tree::pointer::JsonPointerSegment;
-use egui_json_tree::value::BaseValueType;
-use egui_json_tree::value::ExpandableType;
-use egui_json_tree::value::JsonTreeValue;
-use egui_json_tree::value::ToJsonTreeValue;
-use serde_json::{Map, Value};
-use std::collections::{BTreeMap, BTreeSet};
-use std::fmt::Debug;
-use std::fmt::Display;
+//! UI-independent JSON diffing: a structural diff addressed by JSON pointer,
+//! and a structure-aware line diff for side-by-side display.
 
-#[derive(Debug)]
-pub enum WrappedValue<'a> {
-    Object(BTreeMap<String, WrappedValue<'a>>),
-    Array(Vec<WrappedValue<'a>>),
-    Base(DiffNode<'a>),
+pub mod folder;
+pub mod format;
+pub mod structural;
+pub mod text;
+
+pub use folder::{PairEntry, PairStatus, compare_folders, scan_json_files};
+pub use format::{FormattedJson, format_json};
+pub use structural::{Change, ChangeKind, structural_diff};
+pub use text::{Hunk, HunkKind, LineStatus, Segment, SideBySide};
+
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::collections::HashMap;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiffOptions {
+    /// Pretty print both documents before comparing, so formatting-only
+    /// differences disappear and lines align by JSON structure.
+    pub format: bool,
+    /// Sort object keys when formatting.
+    pub sort_keys: bool,
+    /// When not formatting, ignore whitespace while matching lines.
+    pub ignore_whitespace: bool,
 }
 
-impl<'a> WrappedValue<'a> {
-    pub fn status(&self) -> NodeStatus {
-        match self {
-            WrappedValue::Base(node) => node.status,
-            WrappedValue::Object(map) => {
-                if map.is_empty() {
-                    NodeStatus::Unchanged
-                } else {
-                    // Accumulate the status of all children
-                    map.values()
-                        .map(|v| v.status())
-                        .fold(NodeStatus::Unchanged, |acc, s| acc.combine(s))
-                }
-            }
-            WrappedValue::Array(vec) => {
-                if vec.is_empty() {
-                    NodeStatus::Unchanged
-                } else {
-                    // Accumulate the status of all elements
-                    vec.iter()
-                        .map(|v| v.status())
-                        .fold(NodeStatus::Unchanged, |acc, s| acc.combine(s))
-                }
-            }
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NodeStatus {
-    Unchanged,
-    Modified,
-    Added,
-    Deleted,
-}
-
-impl Display for NodeStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        use NodeStatus::*;
-        let text = match self {
-            Unchanged => "unchanged",
-            Modified => "modified",
-            Added => "added",
-            Deleted => "deleted",
-        };
-
-        f.write_str(text)
-    }
-}
-
-impl NodeStatus {
-    // Combines two statuses to determine parent status
-    fn combine(self, other: Self) -> Self {
-        match (self, other) {
-            // If anything is modified, or if we mix additions and deletions, it's Modified
-            (NodeStatus::Modified, _) | (_, NodeStatus::Modified) => NodeStatus::Modified,
-            (NodeStatus::Added, NodeStatus::Deleted) | (NodeStatus::Deleted, NodeStatus::Added) => {
-                NodeStatus::Modified
-            }
-
-            // If they match, keep it
-            (NodeStatus::Added, NodeStatus::Added) => NodeStatus::Added,
-            (NodeStatus::Deleted, NodeStatus::Deleted) => NodeStatus::Deleted,
-
-            // Unchanged yields to structural changes
-            (NodeStatus::Unchanged, structural) | (structural, NodeStatus::Unchanged) => structural,
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct DiffNode<'a> {
-    pub value: &'a Value,
-    pub status: NodeStatus,
-}
-
-impl<'a> Display for DiffNode<'a> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        Display::fmt(self.value, f)?;
-        Display::fmt(&self.status, f)
-    }
-}
-
-impl<'a> From<&'a Value> for DiffNode<'a> {
-    fn from(value: &'a Value) -> Self {
+impl Default for DiffOptions {
+    fn default() -> Self {
         Self {
-            value,
-            status: NodeStatus::Unchanged,
+            format: true,
+            sort_keys: false,
+            ignore_whitespace: false,
         }
     }
 }
 
-fn gen_diff_object<'a>(
-    old_object: &'a Map<String, Value>,
-    new_object: &'a Map<String, Value>,
-) -> WrappedValue<'a> {
-    let old_keys = old_object.keys();
-    let new_keys = new_object.keys();
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ParseError {
+    pub message: String,
+    pub line: usize,
+    pub column: usize,
+}
 
-    let keys: BTreeSet<_> = old_keys.chain(new_keys).collect();
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} (line {}, column {})",
+            self.message, self.line, self.column
+        )
+    }
+}
 
-    let mut map = BTreeMap::new();
-    for key in keys {
-        let old_value = old_object.get(key);
-        let new_value = new_object.get(key);
+/// The result of comparing two JSON texts.
+#[derive(Debug, Clone, Default)]
+pub struct JsonDiff {
+    pub view: SideBySide,
+    /// Semantic changes; `None` unless both sides parsed.
+    pub changes: Option<Vec<Change>>,
+    pub left_error: Option<ParseError>,
+    pub right_error: Option<ParseError>,
+}
 
-        let value = match (old_value, new_value) {
-            (Some(old_value), Some(new_value)) => gen_diff_value(old_value, new_value),
-            (Some(old_value), None) => WrappedValue::Base(DiffNode {
-                value: old_value,
-                status: NodeStatus::Deleted,
-            }),
-            (None, Some(new_value)) => WrappedValue::Base(DiffNode {
-                value: new_value,
-                status: NodeStatus::Added,
-            }),
-            (None, None) => unreachable!(),
+/// Compares two JSON documents given as text. A side that is blank counts as
+/// an empty document; a side that fails to parse is still shown and compared
+/// as plain text, with its error reported.
+pub fn diff_json_texts(left: &str, right: &str, options: &DiffOptions) -> JsonDiff {
+    let (left_value, left_error) = parse(left);
+    let (right_value, right_error) = parse(right);
+
+    let changes = match (&left_value, &right_value) {
+        (Some(left), Some(right)) => Some(structural_diff(left, right)),
+        _ => None,
+    };
+
+    let parsed_or_blank = left_error.is_none() && right_error.is_none();
+    let view = if options.format && parsed_or_blank {
+        let format = |value: &Option<Value>| {
+            value
+                .as_ref()
+                .map(|value| format_json(value, options.sort_keys))
+                .unwrap_or_default()
         };
-
-        map.insert(key.clone(), value);
-    }
-
-    WrappedValue::Object(map)
-}
-
-fn gen_diff_array<'a>(old_array: &'a Vec<Value>, new_array: &'a Vec<Value>) -> WrappedValue<'a> {
-    let max_len = std::cmp::max(old_array.len(), new_array.len());
-    let mut array = Vec::new();
-
-    for i in 0..max_len {
-        let old_value = old_array.get(i);
-        let new_value = new_array.get(i);
-
-        let value = match (old_value, new_value) {
-            (Some(old_value), Some(new_value)) => gen_diff_value(old_value, new_value),
-            (Some(old_value), None) => WrappedValue::Base(DiffNode {
-                value: old_value,
-                status: NodeStatus::Deleted,
-            }),
-            (None, Some(new_value)) => WrappedValue::Base(DiffNode {
-                value: new_value,
-                status: NodeStatus::Added,
-            }),
-            (None, None) => unreachable!(),
-        };
-
-        array.push(value);
-    }
-
-    WrappedValue::Array(array)
-}
-
-fn gen_diff_value<'a>(old_value: &'a Value, new_value: &'a Value) -> WrappedValue<'a> {
-    match (old_value, new_value) {
-        (Value::Object(old_object), Value::Object(new_object)) => {
-            gen_diff_object(old_object, new_object)
+        let (left, right) = (format(&left_value), format(&right_value));
+        let mut view = SideBySide::with_keys(left.lines, right.lines, &left.keys, &right.keys);
+        if let Some(changes) = &changes {
+            view.left_status = semantic_status(&left.pointers, changes, Change::left_path, true);
+            view.right_status =
+                semantic_status(&right.pointers, changes, Change::right_path, false);
         }
-        (Value::Array(old_array), Value::Array(new_array)) => gen_diff_array(old_array, new_array),
-        (Value::Bool(old_bool), Value::Bool(new_bool)) => {
-            let mut diff_node = DiffNode::from(new_value);
-            if old_bool != new_bool {
-                diff_node.status = NodeStatus::Modified;
-            }
+        view
+    } else {
+        SideBySide::new(left, right, options.ignore_whitespace)
+    };
 
-            WrappedValue::Base(diff_node)
-        }
-        (Value::Number(old_number), Value::Number(new_number)) => {
-            let mut diff_node = DiffNode::from(new_value);
-            if old_number != new_number {
-                diff_node.status = NodeStatus::Modified;
-            }
-
-            WrappedValue::Base(diff_node)
-        }
-        (Value::String(old_string), Value::String(new_string)) => {
-            let mut diff_node = DiffNode::from(new_value);
-            if old_string != new_string {
-                diff_node.status = NodeStatus::Modified;
-            }
-
-            WrappedValue::Base(diff_node)
-        }
-        (Value::Null, Value::Null) => WrappedValue::Base(DiffNode {
-            value: old_value,
-            status: NodeStatus::Unchanged,
-        }),
-        (_, value) => WrappedValue::Base(DiffNode {
-            value,
-            status: NodeStatus::Modified,
-        }),
+    JsonDiff {
+        view,
+        changes,
+        left_error,
+        right_error,
     }
 }
 
-fn gen_diff<'a>(old_json: &'a Value, new_json: &'a Value) -> WrappedValue<'a> {
-    match (old_json, new_json) {
-        (Value::Object(old_object), Value::Object(new_object)) => {
-            gen_diff_json(old_object, new_object)
-        }
-        _ => unreachable!(),
-    }
-}
+/// Colours each line by the structural change covering its JSON pointer (the
+/// node itself or an added/removed/retyped ancestor). Lines no change covers
+/// are unchanged even if their text differs, e.g. a comma added because an
+/// element now follows.
+fn semantic_status(
+    pointers: &[String],
+    changes: &[Change],
+    path_of: fn(&Change) -> Option<&str>,
+    left: bool,
+) -> Vec<LineStatus> {
+    let by_path: HashMap<&str, LineStatus> = changes
+        .iter()
+        .filter_map(|change| {
+            let status = match change.kind {
+                ChangeKind::Modified => LineStatus::Modified,
+                ChangeKind::Added | ChangeKind::Removed if left => LineStatus::Removed,
+                ChangeKind::Added | ChangeKind::Removed => LineStatus::Added,
+            };
+            path_of(change).map(|path| (path, status))
+        })
+        .collect();
 
-fn gen_diff_json<'a>(
-    old_json: &'a Map<String, Value>,
-    new_json: &'a Map<String, Value>,
-) -> WrappedValue<'a> {
-    let old_keys = old_json.keys().into_iter();
-    let new_keys = new_json.keys().into_iter();
-    let mut map = BTreeMap::new();
-    let all_keys: BTreeSet<_> = old_keys.chain(new_keys).collect();
-
-    for key in all_keys {
-        let old_val = old_json.get(key);
-        let new_val = new_json.get(key);
-
-        let value = match (old_val, new_val) {
-            (Some(old_val), Some(new_val)) => gen_diff_value(old_val, new_val),
-            (Some(value), None) => WrappedValue::Base(DiffNode {
-                value,
-                status: NodeStatus::Deleted,
-            }),
-            (None, Some(value)) => WrappedValue::Base(DiffNode {
-                value,
-                status: NodeStatus::Added,
-            }),
-            (None, None) => unreachable!(),
-        };
-
-        map.insert(key.clone(), value);
-    }
-
-    WrappedValue::Object(map)
-}
-
-impl<'a> From<(&'a Value, &'a Value)> for WrappedValue<'a> {
-    fn from(value: (&'a Value, &'a Value)) -> Self {
-        let (old_json, new_json) = value;
-
-        gen_diff(old_json, new_json)
-    }
-}
-
-impl<'a> ToJsonTreeValue for WrappedValue<'a> {
-    fn to_json_tree_value(&self) -> JsonTreeValue<'_, Self> {
-        use WrappedValue::*;
-        match self {
-            Object(obj) => {
-                let mut res = Vec::new();
-                let expandable_type = ExpandableType::Object;
-
-                for (key, value) in obj {
-                    let pointer_segment = JsonPointerSegment::Key(key);
-                    res.push((pointer_segment, value));
+    pointers
+        .iter()
+        .map(|pointer| {
+            let mut current = pointer.as_str();
+            loop {
+                if let Some(status) = by_path.get(current) {
+                    return *status;
                 }
-
-                JsonTreeValue::Expandable(res, expandable_type)
-            }
-            Array(array) => {
-                let mut res = Vec::new();
-                let expandable_type = ExpandableType::Object;
-
-                for (index, value) in array.iter().enumerate() {
-                    let pointer_segment = JsonPointerSegment::Index(index);
-                    res.push((pointer_segment, value));
-                }
-
-                JsonTreeValue::Expandable(res, expandable_type)
-            }
-            Base(node) => {
-                let DiffNode { value, .. } = node;
-                match value {
-                    Value::Null => JsonTreeValue::Base(self, value, BaseValueType::Null),
-                    Value::Bool(value) => JsonTreeValue::Base(self, value, BaseValueType::Bool),
-                    Value::Number(number) => {
-                        JsonTreeValue::Base(self, number, BaseValueType::Number)
-                    }
-                    Value::String(string) => {
-                        JsonTreeValue::Base(self, string, BaseValueType::String)
-                    }
-                    Value::Array(_) | Value::Object(_) => unreachable!(),
+                match current.rfind('/') {
+                    Some(end) => current = &current[..end],
+                    None => return LineStatus::Unchanged,
                 }
             }
-        }
+        })
+        .collect()
+}
+
+fn parse(text: &str) -> (Option<Value>, Option<ParseError>) {
+    if text.trim().is_empty() {
+        return (None, None);
+    }
+    match serde_json::from_str(text) {
+        Ok(value) => (Some(value), None),
+        Err(error) => (
+            None,
+            Some(ParseError {
+                message: error.to_string(),
+                line: error.line(),
+                column: error.column(),
+            }),
+        ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn formatting_differences_vanish() {
+        let diff = diff_json_texts(
+            r#"{"a":1,"b":[1,2]}"#,
+            "{\n \"a\": 1, \"b\": [1,2]\n}",
+            &DiffOptions::default(),
+        );
+        assert!(diff.view.hunks.is_empty());
+        assert_eq!(diff.changes, Some(vec![]));
     }
 
-    fn is_expandable(&self) -> bool {
-        matches!(self, WrappedValue::Object(_) | WrappedValue::Array(_))
+    #[test]
+    fn structure_aware_alignment() {
+        // The `"id": 1,` line exists under both objects; it must align with
+        // its own object's line, not the first look-alike.
+        let left = r#"{"x": {"id": 1, "v": 1}, "y": {"id": 1, "v": 2}}"#;
+        let right = r#"{"y": {"id": 1, "v": 2}}"#;
+        let diff = diff_json_texts(left, right, &DiffOptions::default());
+        assert_eq!(diff.view.hunks.len(), 1);
+        assert_eq!(diff.view.hunks[0].kind, HunkKind::Removed);
+        assert_eq!(diff.view.hunks[0].left, 1..5);
+    }
+
+    #[test]
+    fn invalid_side_falls_back_to_text() {
+        let diff = diff_json_texts("{\"a\": 1}", "{\"a\": ", &DiffOptions::default());
+        assert!(diff.changes.is_none());
+        assert!(diff.left_error.is_none());
+        assert_eq!(diff.right_error.as_ref().map(|error| error.line), Some(1));
+        assert_eq!(diff.view.right, vec!["{\"a\": "]);
+    }
+
+    #[test]
+    fn blank_side_shows_everything_added() {
+        let diff = diff_json_texts("", "{\"a\": 1}", &DiffOptions::default());
+        assert_eq!(diff.view.hunks.len(), 1);
+        assert_eq!(diff.view.hunks[0].kind, HunkKind::Added);
+        assert!(diff.changes.is_none());
+    }
+
+    #[test]
+    fn lines_are_coloured_by_semantic_change() {
+        let left = r#"{"version": "1", "tags": ["a"], "old": true}"#;
+        let right = r#"{"version": "2", "tags": ["a", "b"], "new": {"x": 1}}"#;
+        let diff = diff_json_texts(left, right, &DiffOptions::default());
+        let colours = |lines: &[String], status: &[LineStatus]| {
+            lines
+                .iter()
+                .zip(status)
+                .map(|(line, status)| (line.trim().to_owned(), *status))
+                .collect::<Vec<_>>()
+        };
+        use LineStatus::*;
+        assert_eq!(
+            colours(&diff.view.left, &diff.view.left_status),
+            [
+                ("{", Unchanged),
+                ("\"version\": \"1\",", Modified),
+                ("\"tags\": [", Unchanged),
+                ("\"a\"", Unchanged),
+                ("],", Unchanged),
+                ("\"old\": true", Removed),
+                ("}", Unchanged),
+            ]
+            .map(|(line, status)| (line.to_owned(), status))
+        );
+        assert_eq!(
+            colours(&diff.view.right, &diff.view.right_status),
+            [
+                ("{", Unchanged),
+                ("\"version\": \"2\",", Modified),
+                ("\"tags\": [", Unchanged),
+                // Only a comma was added: the value is unchanged.
+                ("\"a\",", Unchanged),
+                ("\"b\"", Added),
+                ("],", Unchanged),
+                ("\"new\": {", Added),
+                ("\"x\": 1", Added),
+                ("}", Added),
+                ("}", Unchanged),
+            ]
+            .map(|(line, status)| (line.to_owned(), status))
+        );
     }
 }
