@@ -1,6 +1,7 @@
 //! Line-oriented side-by-side diff with intra-line (word level) highlights,
 //! the model behind a VS Code style two-pane diff editor.
 
+use crate::format::FoldMark;
 use serde::Serialize;
 use similar::{Algorithm, DiffOp, capture_diff_slices, capture_diff_slices_by_key};
 use std::ops::Range;
@@ -67,6 +68,10 @@ pub struct SideBySide {
     pub left_status: Vec<LineStatus>,
     /// What happened to each right line.
     pub right_status: Vec<LineStatus>,
+    /// Foldable containers on left lines (formatted JSON only).
+    pub left_folds: Vec<Option<FoldMark>>,
+    /// Foldable containers on right lines.
+    pub right_folds: Vec<Option<FoldMark>>,
 }
 
 /// The colour class of one line.
@@ -190,12 +195,22 @@ impl SideBySide {
         }
 
         Self {
+            left_folds: vec![None; left.len()],
+            right_folds: vec![None; right.len()],
             left,
             right,
             hunks,
             segments,
             left_status,
             right_status,
+        }
+    }
+
+    pub fn folds(&self, left: bool) -> &[Option<FoldMark>] {
+        if left {
+            &self.left_folds
+        } else {
+            &self.right_folds
         }
     }
 

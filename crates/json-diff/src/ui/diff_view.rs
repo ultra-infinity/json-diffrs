@@ -14,10 +14,10 @@
 //! around blocks of different height.
 
 use super::{Palette, json_line_job};
-use crate::state::{AppState, Side};
+use crate::state::{AppState, Command, Side};
 use eframe::egui::{
-    self, Align2, Color32, CornerRadius, FontId, Mesh, Pos2, Rect, Sense, Shape, Stroke,
-    StrokeKind, TextStyle, Ui, Vec2, pos2, vec2,
+    self, Align2, Color32, CornerRadius, CursorIcon, FontId, Id, Mesh, Pos2, Rangef, Rect, Sense,
+    Shape, Stroke, StrokeKind, TextStyle, Ui, Vec2, pos2, vec2,
 };
 use json_diff_core::{Hunk, LineStatus, SideBySide};
 
@@ -25,6 +25,10 @@ const CONNECTOR_WIDTH: f32 = 56.0;
 const RULER_WIDTH: f32 = 14.0;
 const HEADER_HEIGHT: f32 = 26.0;
 const SIGN_WIDTH: f32 = 16.0;
+/// The fold chevron column, between line numbers and the change sign.
+const FOLD_WIDTH: f32 = 16.0;
+/// Thickness of the horizontal scrollbar.
+const SCROLLBAR_SIZE: f32 = 10.0;
 
 /// Where each pane's lines land on screen for the current scroll position.
 struct Placement {
@@ -45,7 +49,12 @@ impl Placement {
     }
 }
 
-pub fn diff_view(ui: &mut Ui, state: &mut AppState, palette: &Palette) {
+pub fn diff_view(
+    ui: &mut Ui,
+    state: &mut AppState,
+    palette: &Palette,
+    commands: &mut Vec<Command>,
+) {
     if state.docs.iter().all(|doc| doc.text.is_empty()) {
         empty_state(ui);
         return;
@@ -81,9 +90,11 @@ pub fn diff_view(ui: &mut Ui, state: &mut AppState, palette: &Palette) {
         .max(1)
         .to_string()
         .len() as f32;
-    let gutter = digits * digit_width + 12.0 + SIGN_WIDTH;
+    let gutter = digits * digit_width + 12.0 + FOLD_WIDTH + SIGN_WIDTH;
 
-    // Scrolling.
+    // Scrolling, VS Code style: the wheel or trackpad (Shift for horizontal)
+    // over the view; keys while the view is hovered or focused; a draggable
+    // thumb over the overview ruler; a horizontal scrollbar for long lines.
     let scroll_id = ui.id().with("diff_scroll");
     let mut scroll: Vec2 = ui.data(|data| data.get_temp(scroll_id)).unwrap_or_default();
     let total_height = view.aligned_rows() as f32 * row_height;
@@ -95,28 +106,40 @@ pub fn diff_view(ui: &mut Ui, state: &mut AppState, palette: &Palette) {
         .map(|line| line.chars().count())
         .max()
         .unwrap_or(0);
-    let max_scroll_x = (longest as f32 * digit_width - (pane_width - gutter) + 24.0).max(0.0);
+    let text_width = (pane_width - gutter).max(1.0);
+    let max_scroll_x = (longest as f32 * digit_width - text_width + 24.0).max(0.0);
 
-    if ui.rect_contains_pointer(body) {
-        let (wheel, keys) = ui.input(|input| {
-            let page = body.height() * 0.9;
-            let mut keys = 0.0;
-            if input.key_pressed(egui::Key::PageDown) {
-                keys += page;
+    if response.clicked() {
+        response.request_focus();
+    }
+    let hovered = ui.rect_contains_pointer(body);
+    // Keys belong to a text field being typed in (e.g. the assistant input).
+    let typing_elsewhere = ui.ctx().text_edit_focused();
+    if hovered {
+        scroll -= ui.input(|input| input.smooth_scroll_delta);
+    }
+    if (hovered || response.has_focus()) && !typing_elsewhere {
+        let page = (body.height() - 2.0 * row_height).max(row_height);
+        ui.input(|input| {
+            for (key, delta) in [
+                (egui::Key::ArrowDown, vec2(0.0, row_height)),
+                (egui::Key::ArrowUp, vec2(0.0, -row_height)),
+                (egui::Key::PageDown, vec2(0.0, page)),
+                (egui::Key::PageUp, vec2(0.0, -page)),
+                (egui::Key::ArrowRight, vec2(digit_width * 4.0, 0.0)),
+                (egui::Key::ArrowLeft, vec2(-digit_width * 4.0, 0.0)),
+            ] {
+                if input.key_pressed(key) {
+                    scroll += delta;
+                }
             }
-            if input.key_pressed(egui::Key::PageUp) {
-                keys -= page;
+            if input.key_pressed(egui::Key::Home) {
+                scroll = Vec2::ZERO;
             }
-            if input.key_pressed(egui::Key::ArrowDown) {
-                keys += row_height * 3.0;
+            if input.key_pressed(egui::Key::End) {
+                scroll.y = max_scroll_y;
             }
-            if input.key_pressed(egui::Key::ArrowUp) {
-                keys -= row_height * 3.0;
-            }
-            (input.smooth_scroll_delta, keys)
         });
-        scroll -= wheel;
-        scroll.y += keys;
     }
     if state.scroll_to_current {
         state.scroll_to_current = false;
@@ -125,12 +148,42 @@ pub fn diff_view(ui: &mut Ui, state: &mut AppState, palette: &Palette) {
         }
     }
 
-    // Ruler: click or drag to jump.
+    // The vertical scrollbar: a thumb over the overview ruler.
+    let vertical = Scrollbar::new(
+        ruler.y_range(),
+        body.height(),
+        total_height + row_height,
+        max_scroll_y,
+    );
     let ruler_response = ui.interact(ruler, scroll_id.with("ruler"), Sense::click_and_drag());
     if let Some(pointer) = ruler_response.interact_pointer_pos() {
-        let fraction = ((pointer.y - ruler.top()) / ruler.height()).clamp(0.0, 1.0);
-        scroll.y = fraction * total_height - body.height() / 2.0;
+        scroll.y = vertical.drag(ui, scroll_id.with("ruler_grab"), pointer.y, scroll.y);
+    } else {
+        Scrollbar::release(ui, scroll_id.with("ruler_grab"));
     }
+
+    // The horizontal scrollbar, along the bottom of both panes.
+    let hbar = Rect::from_min_max(
+        pos2(panes[0].left() + gutter, body.bottom() - SCROLLBAR_SIZE),
+        pos2(panes[1].right(), body.bottom()),
+    );
+    let horizontal = Scrollbar::new(
+        hbar.x_range(),
+        text_width,
+        text_width + max_scroll_x,
+        max_scroll_x,
+    );
+    let hbar_response = (max_scroll_x > 0.0)
+        .then(|| ui.interact(hbar, scroll_id.with("hbar"), Sense::click_and_drag()));
+    if let Some(pointer) = hbar_response
+        .as_ref()
+        .and_then(|r| r.interact_pointer_pos())
+    {
+        scroll.x = horizontal.drag(ui, scroll_id.with("hbar_grab"), pointer.x, scroll.x);
+    } else {
+        Scrollbar::release(ui, scroll_id.with("hbar_grab"));
+    }
+
     scroll.y = scroll.y.clamp(0.0, max_scroll_y);
     scroll.x = scroll.x.clamp(0.0, max_scroll_x);
     ui.data_mut(|data| data.insert_temp(scroll_id, scroll));
@@ -148,18 +201,36 @@ pub fn diff_view(ui: &mut Ui, state: &mut AppState, palette: &Palette) {
         row_height,
     };
 
-    // Click a changed block to make it current.
-    if response.clicked()
-        && let Some(pointer) = response.interact_pointer_pos()
-    {
+    // Clicking a fold chevron (or double-clicking a foldable line) folds or
+    // unfolds it; clicking a changed block makes it current.
+    if let Some(pointer) = response.hover_pos() {
         for side in Side::BOTH {
-            if panes[side.index()].contains(pointer) {
-                let line = placement.line_at(side, pointer.y);
-                if line >= 0.0
-                    && let Some(index) = view.hunk_at_line(side == Side::Left, line as usize)
-                {
-                    state.current_hunk = Some(index);
+            let pane = panes[side.index()];
+            let line = placement.line_at(side, pointer.y);
+            if !pane.contains(pointer) || line < 0.0 {
+                continue;
+            }
+            let line = line as usize;
+            let left = side == Side::Left;
+            let chevron = pane.left() + gutter - SIGN_WIDTH - FOLD_WIDTH;
+            let on_chevron = (chevron..=chevron + FOLD_WIDTH).contains(&pointer.x);
+            if let Some(mark) = view.folds(left).get(line).and_then(Option::as_ref) {
+                if on_chevron {
+                    ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
                 }
+                if (response.clicked() && on_chevron) || response.double_clicked() {
+                    commands.push(Command::SetExpanded {
+                        side,
+                        pointer: mark.pointer.clone(),
+                        expanded: mark.collapsed,
+                    });
+                    continue;
+                }
+            }
+            if response.clicked()
+                && let Some(index) = view.hunk_at_line(left, line)
+            {
+                state.current_hunk = Some(index);
             }
         }
     }
@@ -209,11 +280,18 @@ pub fn diff_view(ui: &mut Ui, state: &mut AppState, palette: &Palette) {
         view,
         ruler,
         total_height,
-        scroll.y,
         body.height(),
         palette,
         visuals,
     );
+    if max_scroll_y > 0.0 {
+        let thumb = Rect::from_x_y_ranges(ruler.x_range(), vertical.thumb(scroll.y));
+        paint_thumb(&painter, thumb, &ruler_response, visuals);
+    }
+    if let Some(hbar_response) = &hbar_response {
+        let thumb = Rect::from_x_y_ranges(horizontal.thumb(scroll.x), hbar.y_range()).shrink(2.0);
+        paint_thumb(&painter, thumb, hbar_response, visuals);
+    }
     paint_header(&painter, state, header, panes, palette, visuals);
     painter.vline(
         connector.left(),
@@ -405,7 +483,7 @@ fn paint_lines(
             LineStatus::Modified => "~",
         };
         painter.text(
-            pos2(pane.left() + gutter - SIGN_WIDTH - 6.0, center),
+            pos2(pane.left() + gutter - SIGN_WIDTH - FOLD_WIDTH - 2.0, center),
             Align2::RIGHT_CENTER,
             (line + 1).to_string(),
             number_font.clone(),
@@ -415,6 +493,16 @@ fn paint_lines(
                 palette.line_number
             },
         );
+        let fold = view.folds(side == Side::Left)[line].as_ref();
+        if let Some(fold) = fold {
+            let x = pane.left() + gutter - SIGN_WIDTH - FOLD_WIDTH / 2.0;
+            paint_chevron(
+                painter,
+                pos2(x, center),
+                fold.collapsed,
+                palette.line_number_active,
+            );
+        }
         if let Some((_, border, _)) = colors {
             painter.text(
                 pos2(pane.left() + gutter - SIGN_WIDTH / 2.0, center),
@@ -425,9 +513,11 @@ fn paint_lines(
             );
         }
 
-        // Word-level highlights, only on lines whose value changed.
+        // Word-level highlights, only on lines whose value changed; a folded
+        // line reads the same on both sides, so it gets none.
+        let folded = fold.is_some_and(|fold| fold.collapsed);
         let (inline, highlight) = match (hunk, colors) {
-            (Some(hunk), Some((_, _, highlight))) => {
+            (Some(hunk), Some((_, _, highlight))) if !folded => {
                 let inline = match side {
                     Side::Left => hunk.left_inline.get(line - hunk.left.start),
                     Side::Right => hunk.right_inline.get(line - hunk.right.start),
@@ -440,12 +530,48 @@ fn paint_lines(
             fonts.layout_job(json_line_job(text, font, palette, inline, highlight))
         });
         let y = center - galley.size().y / 2.0;
+        let text_end = text_clip.left() + 4.0 - scroll_x + galley.size().x;
         text_painter.galley(
             pos2(text_clip.left() + 4.0 - scroll_x, y),
             galley,
             palette.punctuation,
         );
+
+        // What a folded line hides.
+        if let Some(fold) = fold.filter(|fold| fold.collapsed) {
+            let noun = match (text.contains("{…}"), fold.children) {
+                (true, 1) => "key",
+                (true, _) => "keys",
+                (false, 1) => "item",
+                (false, _) => "items",
+            };
+            text_painter.text(
+                pos2(text_end + 12.0, center),
+                Align2::LEFT_CENTER,
+                format!("{} {noun} · {} lines", fold.children, fold.hidden_lines + 1),
+                FontId::proportional(font.size * 0.85),
+                palette.line_number,
+            );
+        }
     }
+}
+
+/// A small triangle: pointing right when folded, down when expanded.
+fn paint_chevron(painter: &egui::Painter, center: Pos2, collapsed: bool, color: Color32) {
+    let points = if collapsed {
+        vec![
+            center + vec2(-2.5, -4.5),
+            center + vec2(3.5, 0.0),
+            center + vec2(-2.5, 4.5),
+        ]
+    } else {
+        vec![
+            center + vec2(-4.5, -2.5),
+            center + vec2(4.5, -2.5),
+            center + vec2(0.0, 3.5),
+        ]
+    };
+    painter.add(Shape::convex_polygon(points, color, Stroke::NONE));
 }
 
 /// Ribbons joining each block's two sides across the gutter.
@@ -533,7 +659,6 @@ fn paint_ruler(
     view: &SideBySide,
     ruler: Rect,
     total_height: f32,
-    scroll_y: f32,
     view_height: f32,
     palette: &Palette,
     visuals: &egui::Visuals,
@@ -560,15 +685,6 @@ fn paint_ruler(
         painter.rect_filled(left, CornerRadius::ZERO, left_color);
         painter.rect_filled(right, CornerRadius::ZERO, right_color);
     }
-    let visible = Rect::from_min_size(
-        pos2(ruler.left(), ruler.top() + scroll_y * scale),
-        vec2(ruler.width(), (view_height * scale).min(ruler.height())),
-    );
-    painter.rect_filled(
-        visible,
-        CornerRadius::ZERO,
-        visuals.text_color().gamma_multiply(0.15),
-    );
 }
 
 fn paint_header(
@@ -635,5 +751,82 @@ fn paint_header(
         header.x_range(),
         header.bottom(),
         visuals.widgets.noninteractive.bg_stroke,
+    );
+}
+
+/// One scrollbar: a track along one axis and a thumb as long as the visible
+/// share of the content.
+struct Scrollbar {
+    track: Rangef,
+    thumb_len: f32,
+    max_scroll: f32,
+}
+
+impl Scrollbar {
+    fn new(track: Rangef, visible: f32, content: f32, max_scroll: f32) -> Self {
+        let length = track.span();
+        let thumb_len = (length * visible / content.max(visible)).clamp(length.min(24.0), length);
+        Self {
+            track,
+            thumb_len,
+            max_scroll,
+        }
+    }
+
+    fn thumb(&self, scroll: f32) -> Rangef {
+        let free = self.track.span() - self.thumb_len;
+        let fraction = if self.max_scroll > 0.0 {
+            scroll / self.max_scroll
+        } else {
+            0.0
+        };
+        let start = self.track.min + fraction.clamp(0.0, 1.0) * free;
+        Rangef::new(start, start + self.thumb_len)
+    }
+
+    /// The scroll position while the track is pressed at `pointer`.
+    /// Dragging the thumb keeps the grabbed point under the pointer; pressing
+    /// elsewhere on the track centres the thumb there first, as in VS Code.
+    fn drag(&self, ui: &Ui, grab_id: Id, pointer: f32, scroll: f32) -> f32 {
+        let thumb = self.thumb(scroll);
+        let grab = ui.data_mut(|data| {
+            *data.get_temp_mut_or_insert_with(grab_id, || {
+                if thumb.contains(pointer) {
+                    pointer - thumb.min
+                } else {
+                    self.thumb_len / 2.0
+                }
+            })
+        });
+        let free = self.track.span() - self.thumb_len;
+        if free <= 0.0 {
+            return scroll;
+        }
+        ((pointer - grab - self.track.min) / free).clamp(0.0, 1.0) * self.max_scroll
+    }
+
+    fn release(ui: &Ui, grab_id: Id) {
+        ui.data_mut(|data| data.remove::<f32>(grab_id));
+    }
+}
+
+/// A scrollbar thumb, brighter while hovered or dragged.
+fn paint_thumb(
+    painter: &egui::Painter,
+    thumb: Rect,
+    response: &egui::Response,
+    visuals: &egui::Visuals,
+) {
+    let strength = if response.is_pointer_button_down_on() {
+        0.5
+    } else if response.hovered() {
+        0.35
+    } else {
+        0.2
+    };
+    painter.rect_filled(
+        thumb,
+        CornerRadius::same(2),
+        visuals.text_color().gamma_multiply(strength),
     );
 }

@@ -1,4 +1,5 @@
 mod agent;
+mod samples;
 mod state;
 mod tools;
 mod ui;
@@ -8,35 +9,6 @@ use eframe::egui::{self, Color32, Rect, RichText};
 use state::{AppState, Command, PanelKind, Side, Theme, ViewMode, WindowAction};
 use std::path::PathBuf;
 use ui::{AgentPanelState, ChatEntry, CodeEditor, FilePicker, Palette, PickKind};
-
-const SAMPLE_ORIGINAL: &str = r#"{
-  "name": "json-diff",
-  "version": "0.1.0",
-  "features": ["side-by-side", "folders"],
-  "settings": {
-    "theme": "dark",
-    "tab_size": 2,
-    "telemetry": true
-  },
-  "authors": [
-    { "name": "Omkar Mohanty", "role": "maintainer" }
-  ]
-}"#;
-
-const SAMPLE_MODIFIED: &str = r#"{
-  "name": "json-diff",
-  "version": "0.2.0",
-  "features": ["side-by-side", "folders", "agent"],
-  "settings": {
-    "theme": "dark",
-    "tab_size": 4
-  },
-  "authors": [
-    { "name": "Ada", "role": "maintainer" },
-    { "name": "Grace", "role": "reviewer" }
-  ],
-  "license": "MIT"
-}"#;
 
 struct JsonDiffApp {
     state: AppState,
@@ -94,11 +66,11 @@ impl JsonDiffApp {
         } else {
             let _ = app.state.apply(Command::SetText {
                 side: Side::Left,
-                text: SAMPLE_ORIGINAL.into(),
+                text: samples::ORIGINAL.into(),
             });
             let _ = app.state.apply(Command::SetText {
                 side: Side::Right,
-                text: SAMPLE_MODIFIED.into(),
+                text: samples::MODIFIED.into(),
             });
             app.state.set_status(
                 "Showing a sample. Open folders in the explorer to compare your own files.",
@@ -283,7 +255,7 @@ impl eframe::App for JsonDiffApp {
             toolbar(ui, &self.state, &mut commands);
             ui.separator();
             match self.state.view_mode {
-                ViewMode::Diff => ui::diff_view(ui, &mut self.state, &palette),
+                ViewMode::Diff => ui::diff_view(ui, &mut self.state, &palette, &mut commands),
                 ViewMode::Edit => editors(ui, &mut self.state),
             }
         });
@@ -387,6 +359,8 @@ fn title_bar(
                 }
             }
             ui.separator();
+            fold_buttons(ui, state, commands);
+            ui.separator();
             for (theme, label) in [(Theme::Dark, "Dark Theme"), (Theme::Light, "Light Theme")] {
                 if ui.radio(state.theme == theme, label).clicked() {
                     commands.push(Command::SetTheme { theme });
@@ -452,6 +426,37 @@ fn title_bar(
             ui.centered_and_justified(|ui| ui.label(RichText::new(title).weak()));
         });
     });
+}
+
+/// Expand all, collapse all, and reveal changes.
+fn fold_buttons(ui: &mut egui::Ui, state: &AppState, commands: &mut Vec<Command>) {
+    let foldable = state.diff.is_foldable();
+    for (label, tip, command) in [
+        (
+            "Expand all",
+            "Expand every object and array",
+            Command::ExpandAll,
+        ),
+        (
+            "Collapse all",
+            "Show only the top-level keys",
+            Command::CollapseAll,
+        ),
+        (
+            "Reveal changes",
+            "Expand only what leads to a change",
+            Command::RevealChanges,
+        ),
+    ] {
+        if ui
+            .add_enabled(foldable, egui::Button::new(label))
+            .on_hover_text(tip)
+            .on_disabled_hover_text("Folding needs Format JSON on and valid JSON")
+            .clicked()
+        {
+            commands.push(command);
+        }
+    }
 }
 
 fn option_toggles(ui: &mut egui::Ui, state: &AppState, commands: &mut Vec<Command>) {
@@ -540,6 +545,8 @@ fn toolbar(ui: &mut egui::Ui, state: &AppState, commands: &mut Vec<Command>) {
         {
             commands.push(Command::SwapSides);
         }
+        ui.separator();
+        fold_buttons(ui, state, commands);
         ui.separator();
         for (panel, label, tip, shown) in [
             (

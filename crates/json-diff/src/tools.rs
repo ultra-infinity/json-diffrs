@@ -145,6 +145,17 @@ struct WindowArgs {
     action: WindowAction,
 }
 
+#[derive(Deserialize, JsonSchema)]
+struct NodeArgs {
+    /// The document the pointer refers to. Structural changes give `path`
+    /// in the modified (right) document, except removals, which are in the
+    /// original (left) one.
+    side: Side,
+    /// JSON pointer of an object or array, e.g. `/settings` or `/items/3`.
+    /// The same node on the other side follows automatically.
+    pointer: String,
+}
+
 tools! {
     "get_state": "Describe what the app currently shows: open folders, the two documents being compared, change counts, parse errors, options and UI settings. Call this first.",
         NoArgs => |_| Command::GetState;
@@ -196,6 +207,16 @@ tools! {
         PanelArgs => |a| Command::SetPanelVisible { panel: a.panel, visible: a.visible };
     "window": "Minimize, maximize, restore or close the application window. Only close when the user asks to quit.",
         WindowArgs => |a| Command::Window { action: a.action };
+    "expand_node": "Expand a folded object or array (shown as {…} or […]) in the diff, on both sides.",
+        NodeArgs => |a| Command::SetExpanded { side: a.side, pointer: a.pointer, expanded: true };
+    "collapse_node": "Fold an object or array to a single line, on both sides.",
+        NodeArgs => |a| Command::SetExpanded { side: a.side, pointer: a.pointer, expanded: false };
+    "expand_all": "Expand every object and array. Large documents become very long; prefer reveal_changes.",
+        NoArgs => |_| Command::ExpandAll;
+    "collapse_all": "Fold everything below the top level (the default view: one line per top-level key).",
+        NoArgs => |_| Command::CollapseAll;
+    "reveal_changes": "Fold everything except the objects and arrays that lead to a change, so every change is visible.",
+        NoArgs => |_| Command::RevealChanges;
 }
 
 #[cfg(test)]

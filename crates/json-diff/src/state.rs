@@ -6,7 +6,8 @@
 //! need the window are queued in [`AppState::window_requests`].
 
 use json_diff_core::{
-    DiffOptions, JsonDiff, PairEntry, PairStatus, compare_folders, diff_json_texts, scan_json_files,
+    DiffOptions, Folds, JsonDiff, PairEntry, PairStatus, compare_folders, diff_json_texts_folded,
+    scan_json_files,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -152,6 +153,18 @@ pub enum Command {
     GetText {
         side: Side,
     },
+    /// Expand or collapse the container at `pointer` on `side`, and its
+    /// counterpart on the other side.
+    SetExpanded {
+        side: Side,
+        pointer: String,
+        expanded: bool,
+    },
+    ExpandAll,
+    /// Back to the default: only top-level keys shown.
+    CollapseAll,
+    /// Collapse everything except the containers leading to a change.
+    RevealChanges,
 }
 
 #[derive(Debug, Clone)]
@@ -194,6 +207,8 @@ pub struct AppState {
     pub docs: [Document; 2],
     pub options: DiffOptions,
     pub diff: JsonDiff,
+    /// Which containers are expanded; collapsed below the top level by default.
+    pub folds: Folds,
     pub current_hunk: Option<usize>,
     /// Set when the view should scroll to `current_hunk`.
     pub scroll_to_current: bool,
@@ -214,6 +229,7 @@ impl Default for AppState {
             docs: Default::default(),
             options: DiffOptions::default(),
             diff: JsonDiff::default(),
+            folds: Folds::default(),
             current_hunk: None,
             scroll_to_current: false,
             view_mode: ViewMode::Diff,
@@ -287,7 +303,7 @@ impl AppState {
             Command::SelectFile { side, path } => {
                 let path = self.resolve(side, &path)?;
                 self.load(side, &path)?;
-                self.recompute(true);
+                self.new_documents();
                 Ok(self.summary())
             }
             Command::OpenPair { path } => {
@@ -305,24 +321,24 @@ impl AppState {
                         self.docs[side.index()] = Document::default();
                     }
                 }
-                self.recompute(true);
+                self.new_documents();
                 Ok(self.summary())
             }
             Command::SetText { side, text } => {
                 self.docs[side.index()] = Document { path: None, text };
-                self.recompute(true);
+                self.new_documents();
                 Ok(self.summary())
             }
             Command::ClearSide { side } => {
                 self.docs[side.index()] = Document::default();
-                self.recompute(true);
+                self.new_documents();
                 Ok(self.summary())
             }
             Command::SwapSides => {
                 self.folders.swap(0, 1);
                 self.docs.swap(0, 1);
                 self.update_pairs();
-                self.recompute(true);
+                self.new_documents();
                 Ok(self.summary())
             }
             Command::SetOptions {
@@ -447,6 +463,38 @@ impl AppState {
                     "text": &text[..end],
                 }))
             }
+            Command::SetExpanded {
+                side,
+                pointer,
+                expanded,
+            } => {
+                self.require_foldable()?;
+                let left = side == Side::Left;
+                self.folds.set_expanded(left, &pointer, expanded);
+                if let Some(other) = self.diff.counterpart(&pointer, left) {
+                    self.folds.set_expanded(!left, &other, expanded);
+                }
+                self.refold();
+                Ok(json!({ "pointer": pointer, "expanded": expanded, "summary": self.summary() }))
+            }
+            Command::ExpandAll => {
+                self.require_foldable()?;
+                self.folds = Folds::expanded();
+                self.refold();
+                Ok(self.summary())
+            }
+            Command::CollapseAll => {
+                self.require_foldable()?;
+                self.folds = Folds::collapsed();
+                self.refold();
+                Ok(self.summary())
+            }
+            Command::RevealChanges => {
+                self.require_foldable()?;
+                self.folds = self.diff.reveal_changes();
+                self.refold();
+                Ok(self.summary())
+            }
         }
     }
 
@@ -459,7 +507,36 @@ impl AppState {
 
     /// Recomputes the diff after either document or the options changed.
     pub fn recompute(&mut self, reset_position: bool) {
-        self.diff = diff_json_texts(&self.docs[0].text, &self.docs[1].text, &self.options);
+        self.diff = diff_json_texts_folded(
+            &self.docs[0].text,
+            &self.docs[1].text,
+            &self.options,
+            &self.folds,
+        );
+        self.clamp_current(reset_position);
+    }
+
+    /// Recomputes after new documents were loaded: folds start over.
+    fn new_documents(&mut self) {
+        self.folds = Folds::default();
+        self.recompute(true);
+    }
+
+    /// Re-renders after the folds changed, without re-parsing.
+    fn refold(&mut self) {
+        self.diff.refold(&self.folds);
+        self.clamp_current(false);
+    }
+
+    fn require_foldable(&self) -> Result<(), String> {
+        if self.diff.is_foldable() {
+            Ok(())
+        } else {
+            Err("folding needs formatted JSON: turn on Format JSON and fix any parse errors".into())
+        }
+    }
+
+    fn clamp_current(&mut self, reset_position: bool) {
         let hunks = self.diff.view.hunks.len();
         self.current_hunk = match self.current_hunk {
             _ if hunks == 0 => None,
@@ -568,6 +645,16 @@ impl AppState {
                 .copied()
                 .collect::<Vec<_>>()
         };
+        // Folded containers in the block: expand them to see inside.
+        let collapsed = |folds: &[Option<json_diff_core::FoldMark>],
+                         range: &std::ops::Range<usize>| {
+            folds[range.clone()]
+                .iter()
+                .flatten()
+                .filter(|mark| mark.collapsed)
+                .map(|mark| mark.pointer.clone())
+                .collect::<Vec<_>>()
+        };
         Ok(json!({
             "index": index,
             "of": view.hunks.len(),
@@ -578,6 +665,10 @@ impl AppState {
             "right_first_line": hunk.right.start + 1,
             "right_lines": lines(&view.right, &hunk.right),
             "right_status": statuses(&view.right_status, &hunk.right),
+            "collapsed": {
+                "left": collapsed(&view.left_folds, &hunk.left),
+                "right": collapsed(&view.right_folds, &hunk.right),
+            },
         }))
     }
 
@@ -629,6 +720,11 @@ impl AppState {
             "zoom": self.zoom,
             "explorer_visible": self.show_explorer,
             "agent_panel_visible": self.show_agent,
+            "folding": {
+                "available": self.diff.is_foldable(),
+                "default": if self.folds.expands_by_default() { "expanded" } else { "collapsed" },
+                "exceptions": self.folds.exceptions(),
+            },
             "status": self.status.as_ref().map(|status| &status.text),
         })
     }
@@ -761,5 +857,82 @@ mod tests {
 
         state.apply(Command::SwapSides).unwrap();
         assert_eq!(state.docs[0].text, r#"{"a":2,"b":1}"#);
+    }
+
+    #[test]
+    fn folding_commands_keep_both_sides_in_step() {
+        let mut state = AppState::default();
+        let left = r#"{"items": [{"id": 1, "tags": ["a"]}], "meta": {"v": 1}}"#;
+        let right = r#"{"items": [{"id": 0}, {"id": 1, "tags": ["a", "b"]}], "meta": {"v": 1}}"#;
+        state
+            .apply(Command::SetText {
+                side: Side::Left,
+                text: left.into(),
+            })
+            .unwrap();
+        state
+            .apply(Command::SetText {
+                side: Side::Right,
+                text: right.into(),
+            })
+            .unwrap();
+
+        // Opens with one line per top-level key.
+        assert_eq!(state.diff.view.right.len(), 4);
+
+        // Expanding the shifted element on the left expands its counterpart
+        // (index 1) on the right.
+        state
+            .apply(Command::SetExpanded {
+                side: Side::Left,
+                pointer: "/items".into(),
+                expanded: true,
+            })
+            .unwrap();
+        state
+            .apply(Command::SetExpanded {
+                side: Side::Left,
+                pointer: "/items/0".into(),
+                expanded: true,
+            })
+            .unwrap();
+        assert!(state.folds.is_expanded(false, "/items"));
+        assert!(state.folds.is_expanded(false, "/items/1"));
+        assert!(!state.folds.is_expanded(false, "/items/0"));
+
+        state.apply(Command::RevealChanges).unwrap();
+        assert!(state.folds.is_expanded(false, "/items/1/tags"));
+        assert!(!state.folds.is_expanded(false, "/meta"));
+
+        state.apply(Command::ExpandAll).unwrap();
+        assert!(
+            state
+                .diff
+                .view
+                .right
+                .iter()
+                .any(|line| line.contains("\"b\""))
+        );
+        state.apply(Command::CollapseAll).unwrap();
+        assert_eq!(state.diff.view.right.len(), 4);
+
+        // New documents start folded again.
+        state.apply(Command::ExpandAll).unwrap();
+        state
+            .apply(Command::SetText {
+                side: Side::Right,
+                text: left.into(),
+            })
+            .unwrap();
+        assert_eq!(state.folds, Folds::default());
+
+        // Folding needs formatted JSON.
+        state
+            .apply(Command::SetText {
+                side: Side::Right,
+                text: "{".into(),
+            })
+            .unwrap();
+        assert!(state.apply(Command::ExpandAll).is_err());
     }
 }

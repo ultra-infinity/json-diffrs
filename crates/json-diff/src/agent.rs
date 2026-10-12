@@ -32,6 +32,10 @@ the same relative path are paired and marked modified, identical, only_left or o
 In the diff, yellow lines are values present on both sides that changed, green lines exist \
 only in the modified document and red lines only in the original; uncoloured lines inside \
 a changed block only differ in formatting.
+Documents open folded: only top-level keys are shown, and `{…}` or `[…]` stands for a \
+folded object or array. A folded key is yellow when something inside it changed. Use \
+reveal_changes to open just the paths that lead to changes, or expand_node on a pointer \
+(get_change lists the folded pointers in a block) before quoting nested lines.
 
 Every button in the app is available to you as a tool, and your tool calls are visible \
 to the user as they happen. Start with get_state to see what is open. To compare \
