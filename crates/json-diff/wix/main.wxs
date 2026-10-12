@@ -5,7 +5,7 @@
   `json-diff original.json modified.json` works from a terminal.
 
   Built on Linux by `nix build .#msi` (msitools' wixl), or on Windows with
-  `cargo wix -p json-diff` (WiX Toolset 3). Both define `Version` and
+  `cargo wix -p json-diff` (WiX Toolset 3, untested). Both define `Version` and
   `CargoTargetBinDir`.
 -->
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">

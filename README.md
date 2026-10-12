@@ -1,0 +1,173 @@
+# json-diff
+
+A desktop app for comparing JSON documents side by side, in the style of VS Code's diff
+editor. It is built for large files: documents open folded to their top-level keys, and
+changes are found by meaning rather than by line, so reformatting and key order don't
+show up as noise. It runs on Windows and Linux.
+
+![json-diff comparing two versions of a service config](docs/screenshot.png)
+
+## Features
+
+- **Side-by-side diff.** Changed lines are red on the original side and green on the
+  modified side, with the changed characters highlighted. Ribbons connect each change
+  to where it belongs on the other side.
+- **Structural comparison.** Changes are matched by JSON structure, not line position.
+  Records in an array are paired by similarity, so a record inserted next to an edited
+  one shows as one addition and one edit, not two edits.
+- **Folding for large files.** Documents open with only their top-level keys showing. A
+  folded key that hides changes is coloured, and **Reveal changes** opens just the
+  paths that lead to them.
+- **Folder comparison.** Open two folders, original and modified, in the split
+  explorer. Files with the same relative path are paired and marked modified (M), only
+  in the original (D) or only in the modified folder (A).
+- **Options.** Format JSON, sort keys, ignore whitespace, swap sides, and an edit mode
+  for pasting or editing text.
+- **AI assistant (optional).** Ask what changed, or have it drive the app: open
+  folders, step through changes, expand keys. It works with any provider supported by
+  [rig](https://github.com/0xPlaygrounds/rig): OpenAI, Anthropic, Gemini, Mistral,
+  OpenRouter, Ollama and others. It also follows [AGENTS.md](https://agents.md)
+  instructions found next to your files.
+
+## Install
+
+### Windows
+
+Download `json-diff-<version>-x86_64.msi` from the
+[latest release](https://github.com/ultra-infinity/json-diffrs/releases/latest) and run
+it. The installer adds a Start menu shortcut and puts `json-diff` on your `PATH`.
+
+If you'd rather not install anything, download `json-diff-<version>-x86_64.exe` from the
+same page. It is a single self-contained program with no DLLs to ship alongside it.
+
+### NixOS and Nix
+
+Run it without installing:
+
+```sh
+nix run github:ultra-infinity/json-diffrs
+```
+
+To install it on NixOS, add the flake to your system flake's inputs:
+
+```nix
+inputs.json-diff.url = "github:ultra-infinity/json-diffrs";
+```
+
+and add the package to your configuration:
+
+```nix
+environment.systemPackages = [ inputs.json-diff.packages.${pkgs.system}.default ];
+```
+
+This also adds a launcher entry, so you can select two `.json` files in your file
+manager and open them with json-diff.
+
+### From source
+
+You need a recent Rust toolchain (Rust 2024 edition). On Linux you also need the X11 or
+Wayland, xkbcommon and OpenGL development libraries.
+
+```sh
+cargo build --release
+./target/release/json-diff
+```
+
+## Usage
+
+```sh
+json-diff                                # opens with a sample comparison
+json-diff original.json modified.json    # compare two files
+json-diff old-configs/ new-configs/      # compare two folders
+```
+
+You can also open folders and files with the explorer's **Folder…** and **File…**
+buttons, or type a path and press Enter. Folders and files can also be dragged in:
+a folder dropped on the top or bottom half of the explorer opens there, and a file
+opens on the side of the window it lands on.
+
+| Key | Action |
+| --- | --- |
+| F7 / Alt+↓ | Next change |
+| Shift+F7 / Alt+↑ | Previous change |
+| F5 | Refresh folders |
+| ↑ ↓ PageUp PageDown Home End | Scroll the diff |
+| ← → / Shift+wheel | Scroll sideways |
+
+Click the arrow beside a line number to fold or unfold a key. **Expand all**,
+**Collapse all** and **Reveal changes** in the toolbar act on the whole document.
+
+## The assistant
+
+1. Open the **Assistant** panel.
+2. Pick a **Provider**, then a **Model**. Type in the model list to search it, e.g.
+   `gpt`. Choose **Other…** for a model that isn't listed, such as one you've pulled
+   into Ollama.
+3. Enter an API key, or leave the field empty to use the provider's usual environment
+   variable. The field shows its name, e.g. `$OPENAI_API_KEY`. Local providers such as
+   Ollama don't need a key.
+4. Click **Connect**.
+
+To connect automatically at startup, set `JSON_DIFF_MODEL`, for example
+`JSON_DIFF_MODEL=openai:gpt-5.5`.
+
+Every tool call the assistant makes is shown in the panel as it happens. It can open
+files and change the view, but it can't modify or delete anything on disk. Your API key
+is only sent to the provider you pick.
+
+### AGENTS.md
+
+If the folders or files you open contain an `AGENTS.md`, the assistant follows it. Use
+it to explain your data to the assistant, e.g. "version bumps are expected" or "ignore
+the `metadata` key". The **Instructions (AGENTS.md)** section of the panel lists the
+files in use:
+
+- **In an opened folder:** every `AGENTS.md` from the folder's root down to the file
+  being compared. The closest one takes precedence.
+- **For a file opened on its own:** every `AGENTS.md` from its folder up to the root of
+  its git repository.
+- **Your own files:** **Add AGENTS.md…** lets you pick any Markdown file.
+
+Untick a file to stop using it. Only open folders you trust: an `AGENTS.md` in them
+becomes part of the assistant's instructions.
+
+## Development
+
+The workspace has two crates:
+
+- [`crates/json-diff-core`](crates/json-diff-core): UI-independent diffing. It
+  contains the structural diff (addressed by JSON pointer), the side-by-side line
+  alignment, folding and folder pairing.
+- [`crates/json-diff`](crates/json-diff): the egui app, its state and commands, and
+  the assistant.
+
+Every button and menu item goes through one command type, and every command is also a
+tool for the assistant. A new action therefore needs a `Command` in
+[`state.rs`](crates/json-diff/src/state.rs) and a matching tool in
+[`tools.rs`](crates/json-diff/src/tools.rs).
+
+```sh
+nix develop          # toolchain, rust-analyzer and the GUI libraries
+cargo test --workspace
+cargo clippy --workspace --all-targets -- --deny warnings
+cargo run -p json-diff
+```
+
+With Nix:
+
+| Command | Builds |
+| --- | --- |
+| `nix build` | The Linux package |
+| `nix build .#windows` | `json-diff.exe`, cross-compiled from Linux |
+| `nix build .#msi` | The Windows installer |
+| `nix flake check` | Build, clippy, tests and formatting |
+
+The Windows installer is defined in
+[`crates/json-diff/wix/main.wxs`](crates/json-diff/wix/main.wxs).
+
+## License
+
+json-diff is free software: you can redistribute it and/or modify it under the terms of
+the GNU General Public License as published by the Free Software Foundation, either
+version 3 of the License, or (at your option) any later version. See
+[LICENSE](LICENSE).

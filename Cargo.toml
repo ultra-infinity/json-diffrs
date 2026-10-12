@@ -2,6 +2,10 @@
 resolver = "3"
 members = ["crates/*"]
 
+[workspace.package]
+license = "GPL-3.0-or-later"
+repository = "https://github.com/ultra-infinity/json-diffrs"
+
 
 [profile.release]
 # Ship without debug symbols: Nix's strip does not handle Windows .exe files.

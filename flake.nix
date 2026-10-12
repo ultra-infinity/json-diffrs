@@ -98,7 +98,12 @@
                 wrapProgram $out/bin/json-diff \
                   --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath runtimeLibs}
               '';
-              meta.mainProgram = "json-diff";
+              meta = {
+                description = "Side-by-side JSON diff with folder comparison and an AI assistant";
+                homepage = "https://github.com/ultra-infinity/json-diffrs";
+                license = lib.licenses.gpl3Plus;
+                mainProgram = "json-diff";
+              };
             }
           );
 

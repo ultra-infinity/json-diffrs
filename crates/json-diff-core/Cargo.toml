@@ -2,6 +2,9 @@
 name = "json-diff-core"
 version = "0.1.0"
 edition = "2024"
+description = "Structural and side-by-side JSON diffing, addressed by JSON pointer"
+license.workspace = true
+repository.workspace = true
 
 [dependencies]
 serde_json = { version = "1.0.0", features = ["preserve_order"] }
