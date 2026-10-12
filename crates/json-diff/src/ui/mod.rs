@@ -12,8 +12,8 @@ pub use file_picker::{FilePicker, PickKind};
 
 use eframe::egui::{Color32, FontId, text::LayoutJob, text::TextFormat};
 
-/// Diff colours for the dark and light themes: green added, red removed,
-/// yellow modified (VS Code shades).
+/// Diff colours for the dark and light themes (VS Code shades): green on the
+/// modified side, red on the original side.
 #[derive(Clone, Copy)]
 pub struct Palette {
     pub added_line: Color32,
@@ -22,9 +22,8 @@ pub struct Palette {
     pub removed_line: Color32,
     pub removed_text: Color32,
     pub removed_border: Color32,
-    pub modified_line: Color32,
-    pub modified_text: Color32,
-    pub modified_border: Color32,
+    /// Explorer badge for a file that differs between the two folders.
+    pub modified_file: Color32,
     pub line_number: Color32,
     pub line_number_active: Color32,
     pub key: Color32,
@@ -45,9 +44,7 @@ impl Palette {
                 removed_line: Color32::from_rgba_unmultiplied(255, 0, 0, 40),
                 removed_text: Color32::from_rgba_unmultiplied(255, 0, 0, 80),
                 removed_border: Color32::from_rgb(241, 76, 76),
-                modified_line: Color32::from_rgba_unmultiplied(255, 204, 0, 30),
-                modified_text: Color32::from_rgba_unmultiplied(255, 204, 0, 75),
-                modified_border: Color32::from_rgb(229, 192, 76),
+                modified_file: Color32::from_rgb(229, 192, 76),
                 line_number: Color32::from_rgb(110, 118, 129),
                 line_number_active: Color32::from_rgb(204, 204, 204),
                 key: Color32::from_rgb(156, 220, 254),
@@ -65,9 +62,7 @@ impl Palette {
                 removed_line: Color32::from_rgba_unmultiplied(255, 0, 0, 30),
                 removed_text: Color32::from_rgba_unmultiplied(255, 0, 0, 60),
                 removed_border: Color32::from_rgb(205, 49, 49),
-                modified_line: Color32::from_rgba_unmultiplied(255, 200, 0, 50),
-                modified_text: Color32::from_rgba_unmultiplied(255, 190, 0, 110),
-                modified_border: Color32::from_rgb(176, 128, 0),
+                modified_file: Color32::from_rgb(176, 128, 0),
                 line_number: Color32::from_rgb(130, 130, 130),
                 line_number_active: Color32::from_rgb(11, 33, 108),
                 key: Color32::from_rgb(4, 81, 165),

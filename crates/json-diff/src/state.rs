@@ -697,7 +697,6 @@ impl AppState {
             "current_change": self.current_hunk,
             "added_lines": self.diff.view.added_lines(),
             "removed_lines": self.diff.view.removed_lines(),
-            "modified_lines": self.diff.view.modified_lines(),
             "structural_changes": self.diff.changes.as_ref().map(Vec::len),
         })
     }

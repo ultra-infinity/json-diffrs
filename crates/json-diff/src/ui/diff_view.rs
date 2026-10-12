@@ -324,7 +324,7 @@ fn side_range(hunk: &Hunk, side: Side) -> std::ops::Range<usize> {
 }
 
 /// Line fill, box border and intra-line highlight colours for a status:
-/// green added, red removed, yellow modified.
+/// green on the modified side, red on the original side.
 fn status_colors(status: LineStatus, palette: &Palette) -> Option<(Color32, Color32, Color32)> {
     match status {
         LineStatus::Unchanged => None,
@@ -333,11 +333,6 @@ fn status_colors(status: LineStatus, palette: &Palette) -> Option<(Color32, Colo
             palette.removed_line,
             palette.removed_border,
             palette.removed_text,
-        )),
-        LineStatus::Modified => Some((
-            palette.modified_line,
-            palette.modified_border,
-            palette.modified_text,
         )),
     }
 }
@@ -480,7 +475,6 @@ fn paint_lines(
             LineStatus::Unchanged => "",
             LineStatus::Added => "+",
             LineStatus::Removed => "−",
-            LineStatus::Modified => "~",
         };
         painter.text(
             pos2(pane.left() + gutter - SIGN_WIDTH - FOLD_WIDTH - 2.0, center),
@@ -722,30 +716,20 @@ fn paint_header(
             color,
         );
 
-        // Line counts per colour, right-aligned: e.g. "~2  −1".
+        // Coloured line count, right-aligned: "−3" or "+5".
         let left = side == Side::Left;
         let (sign, status, color) = if left {
             ("−", LineStatus::Removed, palette.removed_border)
         } else {
             ("+", LineStatus::Added, palette.added_border)
         };
-        let mut x = panes[side.index()].right() - 8.0;
-        for (text, color) in [
-            (format!("{sign}{}", view.count(left, status)), color),
-            (
-                format!("~{}", view.count(left, LineStatus::Modified)),
-                palette.modified_border,
-            ),
-        ] {
-            let rect = painter.text(
-                pos2(x, header.center().y),
-                Align2::RIGHT_CENTER,
-                text,
-                font.clone(),
-                color,
-            );
-            x = rect.left() - 10.0;
-        }
+        painter.text(
+            pos2(panes[side.index()].right() - 8.0, header.center().y),
+            Align2::RIGHT_CENTER,
+            format!("{sign}{}", view.count(left, status)),
+            font.clone(),
+            color,
+        );
     }
     painter.hline(
         header.x_range(),

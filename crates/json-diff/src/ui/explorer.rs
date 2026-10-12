@@ -206,7 +206,7 @@ fn tree(
                 .any(|path| matches!(state.pair_status(path), Some(status) if status != PairStatus::Identical));
             let mut title = RichText::new(format!("📁 {name}"));
             if changed {
-                title = title.color(palette.modified_border);
+                title = title.color(palette.modified_file);
             }
             egui::CollapsingHeader::new(title)
                 .id_salt(("dir", side, &dir))
@@ -241,7 +241,7 @@ fn file_row(
 ) {
     let status = state.pair_status(path);
     let (badge, color) = match status {
-        Some(PairStatus::Modified) => ("M", palette.modified_border),
+        Some(PairStatus::Modified) => ("M", palette.modified_file),
         Some(PairStatus::OnlyLeft) => ("D", palette.removed_border),
         Some(PairStatus::OnlyRight) => ("A", palette.added_border),
         _ => ("", Color32::TRANSPARENT),

@@ -1,0 +1,7 @@
+# Windows builds are one self-contained .exe: link the C runtime statically so
+# no vcruntime/libgcc/winpthread DLL has to ship next to it.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.x86_64-pc-windows-gnu]
+rustflags = ["-C", "target-feature=+crt-static"]

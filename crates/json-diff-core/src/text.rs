@@ -81,12 +81,10 @@ pub enum LineStatus {
     /// Same value on both sides (possibly reformatted, e.g. a new trailing comma).
     #[default]
     Unchanged,
-    /// Exists only in the modified document (green).
+    /// New or changed in the modified document (green).
     Added,
-    /// Exists only in the original document (red).
+    /// Gone or changed from the original document (red).
     Removed,
-    /// Present on both sides with a different value (yellow).
-    Modified,
 }
 
 impl SideBySide {
@@ -188,7 +186,7 @@ impl SideBySide {
             let (left_kind, right_kind) = match hunk.kind {
                 HunkKind::Added => (LineStatus::Unchanged, LineStatus::Added),
                 HunkKind::Removed => (LineStatus::Removed, LineStatus::Unchanged),
-                HunkKind::Modified => (LineStatus::Modified, LineStatus::Modified),
+                HunkKind::Modified => (LineStatus::Removed, LineStatus::Added),
             };
             left_status[hunk.left.clone()].fill(left_kind);
             right_status[hunk.right.clone()].fill(right_kind);
@@ -222,8 +220,8 @@ impl SideBySide {
         }
     }
 
-    /// The strongest status among one side's lines of hunk `index`:
-    /// modified, then added/removed, then unchanged.
+    /// The colour of one side of hunk `index`: that of its first coloured
+    /// line, or unchanged.
     pub fn hunk_status(&self, index: usize, left: bool) -> LineStatus {
         let hunk = &self.hunks[index];
         let range = if left {
@@ -231,16 +229,11 @@ impl SideBySide {
         } else {
             hunk.right.clone()
         };
-        let statuses = &self.status(left)[range];
-        if statuses.contains(&LineStatus::Modified) {
-            LineStatus::Modified
-        } else {
-            statuses
-                .iter()
-                .copied()
-                .find(|status| *status != LineStatus::Unchanged)
-                .unwrap_or(LineStatus::Unchanged)
-        }
+        self.status(left)[range]
+            .iter()
+            .copied()
+            .find(|status| *status != LineStatus::Unchanged)
+            .unwrap_or(LineStatus::Unchanged)
     }
 
     /// Lines on one side with `status`.
@@ -308,11 +301,6 @@ impl SideBySide {
 
     pub fn removed_lines(&self) -> usize {
         self.count(true, LineStatus::Removed)
-    }
-
-    /// Lines in the modified document whose value changed in place.
-    pub fn modified_lines(&self) -> usize {
-        self.count(false, LineStatus::Modified)
     }
 }
 

@@ -187,7 +187,7 @@ tools! {
         NoArgs => |_| Command::PreviousChange;
     "go_to_change": "Jump to a changed block by index and return its lines.",
         IndexArgs => |a| Command::GoToChange { index: a.index };
-    "get_change": "Return the lines of one changed block, with each line's status (unchanged, added, removed, modified), without moving the view.",
+    "get_change": "Return the lines of one changed block, with each line's status (unchanged, added = green, removed = red), without moving the view.",
         IndexArgs => |a| Command::GetHunk { index: a.index };
     "get_structural_changes": "List semantic changes as JSON pointers (added / removed / modified) with old and new values. Needs both documents to be valid JSON.",
         PageArgs => |a| Command::GetChanges { offset: a.offset, limit: a.limit };

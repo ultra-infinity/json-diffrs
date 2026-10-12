@@ -2,13 +2,13 @@
 //! a release, chosen so every kind of difference appears at least once while
 //! the whole thing stays readable (about 150 lines a side, 16 when folded):
 //!
-//! - `version`, `runtime.replicas`: a value changed in place (yellow, with
-//!   the changed characters highlighted);
+//! - `version`, `runtime.replicas`: a value changed in place (red facing
+//!   green, with the changed characters highlighted);
 //! - `description`: a long line edited in the middle (horizontal scrolling,
 //!   word-level highlights);
-//! - `runtime.timeout`: a number became a string (type change, yellow);
-//! - `database.pool.max`: a change three levels deep (yellow trail through
-//!   the folded keys above it);
+//! - `runtime.timeout`: a number became a string (type change);
+//! - `database.pool.max`: a change three levels deep (the folded `database`
+//!   key is coloured until opened);
 //! - `features`: an array element removed and another added;
 //! - `endpoints`: a record inserted right next to a modified one, and a
 //!   record removed (elements paired by similarity, not position);
@@ -198,7 +198,7 @@ mod tests {
                 .unwrap();
             folded.view.right_status[line]
         };
-        assert_eq!(status("\"database\""), LineStatus::Modified);
+        assert_eq!(status("\"database\""), LineStatus::Added);
         assert_eq!(status("\"tracing\""), LineStatus::Added);
         assert_eq!(status("\"regions\""), LineStatus::Unchanged);
     }

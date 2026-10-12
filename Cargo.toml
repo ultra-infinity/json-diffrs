@@ -2,3 +2,7 @@
 resolver = "3"
 members = ["crates/*"]
 
+
+[profile.release]
+# Ship without debug symbols: Nix's strip does not handle Windows .exe files.
+strip = true

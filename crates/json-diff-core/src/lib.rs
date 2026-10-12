@@ -15,7 +15,7 @@ pub use text::{Hunk, HunkKind, LineStatus, Segment, SideBySide};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DiffOptions {
@@ -218,17 +218,28 @@ fn containers_holding(change: &Change, left: bool, paths: &PathMap) -> Vec<Strin
     containers
 }
 
+/// The colour of a changed line on one side, as in VS Code: red in the
+/// original, green in the modified document.
+fn side_colour(left: bool) -> LineStatus {
+    if left {
+        LineStatus::Removed
+    } else {
+        LineStatus::Added
+    }
+}
+
 /// The structural changes of one side, indexed by pointer.
 struct ChangeIndex<'a> {
-    /// The status each changed node's own lines get.
-    by_path: HashMap<&'a str, LineStatus>,
+    left: bool,
+    /// Nodes on this side that were themselves added, removed or modified.
+    changed: HashSet<&'a str>,
     /// Every container on this side with a change somewhere below it.
     above_changes: HashSet<String>,
 }
 
 impl<'a> ChangeIndex<'a> {
     fn new(changes: &'a [Change], left: bool, paths: &PathMap) -> Self {
-        let mut by_path = HashMap::new();
+        let mut changed = HashSet::new();
         let mut above_changes = HashSet::new();
         for change in changes {
             let own = if left {
@@ -236,34 +247,30 @@ impl<'a> ChangeIndex<'a> {
             } else {
                 change.right_path()
             };
-            if let Some(path) = own {
-                let status = match change.kind {
-                    ChangeKind::Modified => LineStatus::Modified,
-                    ChangeKind::Added | ChangeKind::Removed if left => LineStatus::Removed,
-                    ChangeKind::Added | ChangeKind::Removed => LineStatus::Added,
-                };
-                by_path.insert(path, status);
-            }
-            // Containers that gained or lost a child were modified, on both
-            // sides, even where the child itself is missing.
+            changed.extend(own);
+            // Containers that gained or lost a child changed, on both sides,
+            // even where the child itself is missing.
             above_changes.extend(containers_holding(change, left, paths));
         }
         Self {
-            by_path,
+            left,
+            changed,
             above_changes,
         }
     }
 
     /// Whether the node at `pointer`, or anything below it, changed.
     fn touches(&self, pointer: &str) -> bool {
-        self.by_path.contains_key(pointer) || self.above_changes.contains(pointer)
+        self.changed.contains(pointer) || self.above_changes.contains(pointer)
     }
 
-    /// Colours each line:
+    /// Colours each line, red on the original side and green on the
+    /// modified one:
     /// - a node that was itself added, removed or modified, and everything
-    ///   inside it, takes that change's colour (green, red, yellow);
-    /// - the key line of a container with changes inside is yellow, folded or
-    ///   not, since the container's value changed;
+    ///   inside it;
+    /// - a folded container with changes inside, since its one line stands
+    ///   for them (expanded, it stays plain and its changed children carry
+    ///   the colour);
     /// - anything else is unchanged, even if its text differs (e.g. a comma
     ///   added because an element now follows).
     fn statuses(&self, pointers: &[String], folds: &[Option<FoldMark>]) -> Vec<LineStatus> {
@@ -273,16 +280,18 @@ impl<'a> ChangeIndex<'a> {
             .map(|(pointer, fold)| {
                 let mut current = pointer.as_str();
                 loop {
-                    if let Some(status) = self.by_path.get(current) {
-                        return *status;
+                    if self.changed.contains(current) {
+                        return side_colour(self.left);
                     }
                     match current.rfind('/') {
                         Some(end) => current = &current[..end],
                         None => break,
                     }
                 }
-                if fold.is_some() && self.above_changes.contains(pointer) {
-                    LineStatus::Modified
+                if fold.as_ref().is_some_and(|fold| fold.collapsed)
+                    && self.above_changes.contains(pointer)
+                {
+                    side_colour(self.left)
                 } else {
                     LineStatus::Unchanged
                 }
@@ -369,8 +378,8 @@ mod tests {
             colours(&diff.view.left, &diff.view.left_status),
             [
                 ("{", Unchanged),
-                ("\"version\": \"1\",", Modified),
-                ("\"tags\": [", Modified),
+                ("\"version\": \"1\",", Removed),
+                ("\"tags\": [", Unchanged),
                 ("\"a\"", Unchanged),
                 ("],", Unchanged),
                 ("\"old\": true", Removed),
@@ -382,9 +391,9 @@ mod tests {
             colours(&diff.view.right, &diff.view.right_status),
             [
                 ("{", Unchanged),
-                ("\"version\": \"2\",", Modified),
-                ("\"tags\": [", Modified),
-                // ^ the existing key gained a child, so it was modified.
+                ("\"version\": \"2\",", Added),
+                ("\"tags\": [", Unchanged),
+                // ^ expanded, the key stays plain: its new child is coloured.
                 // Only a comma was added: the value is unchanged.
                 ("\"a\",", Unchanged),
                 ("\"b\"", Added),
@@ -429,8 +438,8 @@ mod tests {
             owned(&[
                 ("{", Unchanged),
                 ("\"name\": \"svc\",", Unchanged),
-                // A child was added inside: the existing key is modified.
-                ("\"env\": {…},", Modified),
+                // A child was added inside the folded key: red here, green there.
+                ("\"env\": {…},", Removed),
                 // Removed top-level key.
                 ("\"gone\": {…},", Removed),
                 ("\"list\": […]", Unchanged),
@@ -442,7 +451,7 @@ mod tests {
             owned(&[
                 ("{", Unchanged),
                 ("\"name\": \"svc\",", Unchanged),
-                ("\"env\": {…},", Modified),
+                ("\"env\": {…},", Added),
                 ("\"list\": […],", Unchanged),
                 // Added top-level key.
                 ("\"new\": {…}", Added),
@@ -469,7 +478,7 @@ mod tests {
     }
 
     #[test]
-    fn expanding_keeps_the_key_yellow_and_colours_the_child() {
+    fn expanding_colours_the_child_not_the_key() {
         use LineStatus::*;
         let mut folds = Folds::default();
         let mut diff = diff_json_texts_folded(LEFT, RIGHT, &DiffOptions::default(), &folds);
@@ -477,10 +486,10 @@ mod tests {
         folds.set_expanded(true, "/env", true);
         diff.refold(&folds);
         let right = coloured(&diff.view, false);
-        assert!(right.contains(&("\"env\": {".to_owned(), Modified)));
+        assert!(right.contains(&("\"env\": {".to_owned(), Unchanged)));
         assert!(right.contains(&("\"LOG\": \"info\",".to_owned(), Unchanged)));
         assert!(right.contains(&("\"TRACE\": \"1\"".to_owned(), Added)));
-        assert!(coloured(&diff.view, true).contains(&("\"env\": {".to_owned(), Modified)));
+        assert!(coloured(&diff.view, true).contains(&("\"env\": {".to_owned(), Unchanged)));
     }
 
     #[test]

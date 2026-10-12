@@ -1,3 +1,6 @@
+// A GUI app: no console window on Windows (debug builds keep it for logs).
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod agent;
 mod samples;
 mod state;
@@ -633,11 +636,10 @@ fn status_bar(ui: &mut egui::Ui, state: &AppState, chat: &AgentPanelState) {
             };
             ui.label(
                 RichText::new(format!(
-                    "{semantic}{} changed blocks  +{} −{} ~{}",
+                    "{semantic}{} changed blocks  +{} −{}",
                     view.hunks.len(),
                     view.added_lines(),
-                    view.removed_lines(),
-                    view.modified_lines()
+                    view.removed_lines()
                 ))
                 .color(text),
             );

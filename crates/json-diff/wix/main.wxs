@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Windows installer for json-diff: one self-contained json-diff.exe in
+  Program Files, a Start menu shortcut, and the install folder on PATH so
+  `json-diff original.json modified.json` works from a terminal.
+
+  Built on Linux by `nix build .#msi` (msitools' wixl), or on Windows with
+  `cargo wix -p json-diff` (WiX Toolset 3). Both define `Version` and
+  `CargoTargetBinDir`.
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <!-- UpgradeCode must never change: it is how a newer MSI finds and
+       replaces an installed older one. -->
+  <Product
+    Id="*"
+    Name="json-diff"
+    Language="1033"
+    Version="$(var.Version)"
+    Manufacturer="Omkar Mohanty"
+    UpgradeCode="A7BC5B9C-8A7F-47FC-B5E3-4674E35A66EF">
+
+    <Package
+      InstallerVersion="500"
+      Compressed="yes"
+      InstallScope="perMachine"
+      Description="json-diff: side-by-side JSON diff"
+      Comments="Compare JSON documents and folders side by side." />
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of json-diff is already installed." />
+    <Media Id="1" Cabinet="json_diff.cab" EmbedCab="yes" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLDIR" Name="json-diff">
+          <Component Id="Executable" Guid="*" Win64="yes">
+            <File
+              Id="JsonDiffExe"
+              Name="json-diff.exe"
+              Source="$(var.CargoTargetBinDir)/json-diff.exe"
+              KeyPath="yes">
+              <Shortcut
+                Id="StartMenuShortcut"
+                Directory="ProgramMenuFolder"
+                Name="json-diff"
+                Description="Compare JSON documents side by side"
+                WorkingDirectory="INSTALLDIR" />
+            </File>
+          </Component>
+          <Component Id="Path" Guid="D6271744-F6DA-4018-A139-25528F3E68C3" Win64="yes">
+            <RegistryValue
+              Root="HKLM"
+              Key="Software\json-diff"
+              Name="InstallDir"
+              Type="string"
+              Value="[INSTALLDIR]"
+              KeyPath="yes" />
+            <Environment
+              Id="PathEntry"
+              Name="PATH"
+              Value="[INSTALLDIR]"
+              Action="set"
+              Part="last"
+              Permanent="no"
+              System="yes" />
+          </Component>
+        </Directory>
+      </Directory>
+      <Directory Id="ProgramMenuFolder" />
+    </Directory>
+
+    <Feature Id="Main" Title="json-diff" Level="1">
+      <ComponentRef Id="Executable" />
+      <ComponentRef Id="Path" />
+    </Feature>
+  </Product>
+</Wix>

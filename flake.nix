@@ -30,8 +30,10 @@
           ...
         }:
         let
+          windowsTarget = "x86_64-pc-windows-gnu";
           # rust-src is the standard library's source: rust-analyzer needs it
-          # to resolve and navigate `std`.
+          # to resolve and navigate `std`. The Windows target's std is for
+          # the `windows` and `msi` packages.
           toolchain = pkgs.rust-bin.beta.latest.default.override {
             extensions = [
               "rust-src"
@@ -39,6 +41,7 @@
               "clippy"
               "rustfmt"
             ];
+            targets = [ windowsTarget ];
           };
           craneLib = (inputs.crane.mkLib pkgs).overrideToolchain toolchain;
 
@@ -72,7 +75,25 @@
               cargoExtraArgs = "--locked -p json-diff";
               # Tests run in the `tests` check instead.
               doCheck = false;
-              nativeBuildInputs = lib.optionals pkgs.stdenv.isLinux [ pkgs.makeWrapper ];
+              nativeBuildInputs = lib.optionals pkgs.stdenv.isLinux [
+                pkgs.makeWrapper
+                pkgs.copyDesktopItems
+              ];
+              # An entry in the desktop's application launcher.
+              desktopItems = lib.optionals pkgs.stdenv.isLinux [
+                (pkgs.makeDesktopItem {
+                  name = "json-diff";
+                  desktopName = "json-diff";
+                  comment = "Compare JSON documents and folders side by side";
+                  exec = "json-diff %F";
+                  icon = "text-x-generic";
+                  categories = [
+                    "Development"
+                    "Utility"
+                  ];
+                  mimeTypes = [ "application/json" ];
+                })
+              ];
               postInstall = lib.optionalString pkgs.stdenv.isLinux ''
                 wrapProgram $out/bin/json-diff \
                   --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath runtimeLibs}
@@ -80,6 +101,49 @@
               meta.mainProgram = "json-diff";
             }
           );
+
+          # Windows: cross-compiled with MinGW into one static json-diff.exe
+          # (see .cargo/config.toml), then wrapped in an MSI by msitools'
+          # wixl. Built from Linux hosts only.
+          mingw = pkgs.pkgsCross.mingwW64.stdenv.cc;
+          # aws-lc (rig's TLS) includes <sched.h>, which MinGW ships in
+          # winpthreads; its static library keeps the exe free of DLLs.
+          winpthreads = pkgs.pkgsCross.mingwW64.windows.pthreads;
+          windowsArgs = commonArgs // {
+            CARGO_BUILD_TARGET = windowsTarget;
+            CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER = "${mingw}/bin/${mingw.targetPrefix}cc";
+            # Replaces the rustflags in .cargo/config.toml, so repeats them.
+            CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS = "-C target-feature=+crt-static -L native=${winpthreads}/lib";
+            # C dependencies (aws-lc, oniguruma) are compiled for Windows too.
+            TARGET_CC = "${mingw}/bin/${mingw.targetPrefix}cc";
+            TARGET_AR = "${mingw}/bin/${mingw.targetPrefix}ar";
+            CFLAGS_x86_64_pc_windows_gnu = "-I${winpthreads}/include";
+            depsBuildBuild = [ mingw ];
+            nativeBuildInputs = [ pkgs.nasm ];
+            doCheck = false;
+          };
+          json-diff-windows = craneLib.buildPackage (
+            windowsArgs
+            // {
+              cargoArtifacts = craneLib.buildDepsOnly windowsArgs;
+              cargoExtraArgs = "--locked -p json-diff";
+            }
+          );
+          json-diff-msi =
+            pkgs.runCommand "json-diff-${commonArgs.version}-msi"
+              { nativeBuildInputs = [ pkgs.msitools ]; }
+              ''
+                # Store files are dated 1970, before the CAB format's 1980
+                # epoch, which Windows would show as 2098. Use a fixed date.
+                mkdir -p bin $out
+                cp ${json-diff-windows}/bin/json-diff.exe bin/
+                touch -d 2000-01-01T00:00:00Z bin/json-diff.exe
+                wixl --arch x64 \
+                  -D Version=${commonArgs.version} \
+                  -D CargoTargetBinDir=bin \
+                  -o $out/json-diff-${commonArgs.version}-x86_64.msi \
+                  ${./crates/json-diff/wix/main.wxs}
+              '';
         in
         {
           _module.args.pkgs = import inputs.nixpkgs {
@@ -87,7 +151,13 @@
             overlays = [ inputs.rust-overlay.overlays.default ];
           };
 
-          packages.default = json-diff;
+          packages = {
+            default = json-diff;
+          }
+          // lib.optionalAttrs pkgs.stdenv.isLinux {
+            windows = json-diff-windows;
+            msi = json-diff-msi;
+          };
 
           apps.default = {
             type = "app";
