@@ -122,17 +122,71 @@ pub fn spawn(ctx: egui::Context) -> AgentHandle {
     }
 }
 
-/// `vendor:model` hints for the settings UI, one per registered provider.
+/// Every provider this build can connect to, as the selection a reference
+/// starts with: the vendor name (`openai`), or `vendor/format` for a vendor
+/// served in several API formats, where the vendor alone is ambiguous.
 pub fn known_providers() -> Vec<String> {
-    let mut vendors: Vec<String> = ProviderId::all().map(|id| id.vendor().to_owned()).collect();
-    vendors.sort();
-    vendors.dedup();
-    vendors
+    let mut selections: Vec<String> = ProviderId::all()
+        .map(|id| {
+            if ProviderId::resolve(id.vendor()).is_ok() {
+                id.vendor().to_owned()
+            } else {
+                id.to_string()
+            }
+        })
+        .collect();
+    selections.sort_unstable();
+    selections.dedup();
+    selections
 }
 
-/// The environment variable the provider in `model` reads its key from.
-pub fn api_key_env(model: &str) -> Option<&'static str> {
-    ProviderRef::parse(model.trim()).ok()?.id()?.api_key_env()
+/// The vendor a provider selection names: `minimax/openai` → `minimax`.
+fn vendor_of(selection: &str) -> &str {
+    selection
+        .split_once('/')
+        .map_or(selection, |(vendor, _)| vendor)
+}
+
+/// One entry of the settings panel's model list.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModelChoice {
+    /// The id sent to the provider, e.g. `gpt-5.5`.
+    pub id: String,
+    /// The catalog's human-readable name, e.g. `GPT-5.5`.
+    pub name: String,
+}
+
+/// The models rig's built-in catalog lists for provider `selection` that
+/// can drive the app, i.e. call tools, newest-looking ids first. Deprecated
+/// models are left out. Empty for providers the catalog does not cover
+/// (local servers such as ollama), where the id is typed instead.
+pub fn catalog_models(selection: &str) -> Vec<ModelChoice> {
+    let vendor = vendor_of(selection);
+    let mut models: Vec<ModelChoice> = rig::catalog::Catalog::builtin()
+        .iter()
+        .filter(|spec| spec.provider.vendor() == vendor && spec.tools && !spec.deprecated)
+        .map(|spec| ModelChoice {
+            id: spec.id.clone(),
+            name: spec.display_name.clone(),
+        })
+        .collect();
+    models.sort_by(|a, b| b.id.cmp(&a.id));
+    models
+}
+
+/// Splits a `vendor:model` reference into its provider and model id; a
+/// reference without a model leaves the id empty.
+pub fn split_reference(reference: &str) -> (String, String) {
+    match reference.trim().split_once(':') {
+        Some((vendor, model)) => (vendor.to_owned(), model.to_owned()),
+        None => (reference.trim().to_owned(), String::new()),
+    }
+}
+
+/// The environment variable provider `selection` reads its API key from by
+/// default.
+pub fn api_key_env(selection: &str) -> Option<&'static str> {
+    ProviderId::resolve(selection.trim()).ok()?.api_key_env()
 }
 
 #[derive(Clone)]
@@ -258,6 +312,32 @@ mod tests {
     use rig::message::{AssistantContent, Origin, ToolCall, ToolFunction, UserContent};
     use rig::test_utils::{MockFrame, MockScript};
     use std::time::Duration;
+
+    /// Every provider in the dropdown resolves, and each catalog model it
+    /// offers forms a reference rig accepts.
+    #[test]
+    fn model_dropdowns_offer_only_connectable_choices() {
+        let providers = known_providers();
+        assert!(providers.iter().any(|p| p == "openai") && providers.iter().any(|p| p == "ollama"));
+        for vendor in &providers {
+            assert!(ProviderId::resolve(vendor).is_ok(), "{vendor}");
+            let models = catalog_models(vendor);
+            eprintln!(
+                "{vendor} ({}): {:?}",
+                models.len(),
+                models.iter().map(|m| &m.id).take(8).collect::<Vec<_>>()
+            );
+            for model in models {
+                let reference = format!("{vendor}:{}", model.id);
+                assert!(ProviderRef::parse(&reference).is_ok(), "{reference}");
+            }
+        }
+        assert!(!catalog_models("openai").is_empty());
+        assert_eq!(
+            split_reference("ollama:qwen3:4b"),
+            ("ollama".into(), "qwen3:4b".into())
+        );
+    }
 
     /// A model that asks for `set_options` once, then reports the tool
     /// result it was given.

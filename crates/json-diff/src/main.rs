@@ -82,7 +82,7 @@ impl JsonDiffApp {
         }
 
         if let Ok(model) = std::env::var(agent::MODEL_ENV) {
-            app.chat.model = model;
+            app.chat.select(&model);
             app.chat.connect(&app.agent);
         }
         app
