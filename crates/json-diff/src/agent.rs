@@ -50,7 +50,12 @@ pub enum AgentRequest {
         model: String,
         api_key: Option<String>,
     },
-    Prompt(String),
+    Prompt {
+        text: String,
+        /// The AGENTS.md section of the system prompt, as of this message
+        /// (see [`crate::agents_md::AgentsMd::prompt_section`]).
+        instructions: String,
+    },
     /// Forget the conversation.
     Reset,
 }
@@ -203,23 +208,48 @@ impl Worker {
     }
 
     async fn run(self, mut requests: tokio::sync::mpsc::UnboundedReceiver<AgentRequest>) {
-        let mut agent: Option<Agent> = None;
+        let mut connected: Option<(DynModel<Completion>, Agent)> = None;
+        // The AGENTS.md section the current agent was built with.
+        let mut current_instructions = String::new();
         let mut history: Vec<Message> = Vec::new();
         while let Some(request) = requests.recv().await {
             match request {
-                AgentRequest::Connect { model, api_key } => match self.build(&model, api_key) {
-                    Ok(built) => {
-                        agent = Some(built);
-                        history.clear();
-                        self.emit(AgentEvent::Connected { model });
+                AgentRequest::Connect { model, api_key } => {
+                    match self.model(&model, api_key).and_then(|completion| {
+                        let agent = self.agent(completion.clone(), &current_instructions)?;
+                        Ok((completion, agent))
+                    }) {
+                        Ok(built) => {
+                            connected = Some(built);
+                            history.clear();
+                            self.emit(AgentEvent::Connected { model });
+                        }
+                        Err(error) => self.emit(AgentEvent::Failed(error)),
                     }
-                    Err(error) => self.emit(AgentEvent::Failed(error)),
-                },
-                AgentRequest::Prompt(prompt) => {
-                    let Some(agent) = &agent else {
+                }
+                AgentRequest::Prompt {
+                    text: prompt,
+                    instructions,
+                } => {
+                    let Some((model, agent)) = &mut connected else {
                         self.emit(AgentEvent::Failed("Connect a model first.".into()));
                         continue;
                     };
+                    // Instructions changed (a folder was opened, a file
+                    // added or switched off): same model and conversation,
+                    // new system prompt.
+                    if instructions != current_instructions {
+                        match self.agent(model.clone(), &instructions) {
+                            Ok(rebuilt) => {
+                                *agent = rebuilt;
+                                current_instructions = instructions;
+                            }
+                            Err(error) => {
+                                self.emit(AgentEvent::Failed(error));
+                                continue;
+                            }
+                        }
+                    }
                     // Register before running so `notify_waiters` sees us.
                     let cancelled = self.cancel.notified();
                     tokio::pin!(cancelled);
@@ -238,23 +268,23 @@ impl Worker {
         }
     }
 
-    fn build(&self, model: &str, api_key: Option<String>) -> Result<Agent, String> {
+    fn model(&self, model: &str, api_key: Option<String>) -> Result<DynModel<Completion>, String> {
         let reference = ProviderRef::parse(model.trim()).map_err(|error| {
             format!("'{model}' is not a model reference like openai:gpt-5.5 ({error})")
         })?;
-        let completion_model = match api_key {
-            Some(key) => {
+        match api_key {
+            Some(key) => Ok(
                 reference.completion_model_with(key, rig::http_client::ReqwestClient::default())
-            }
+            ),
             None => reference
                 .completion_model()
-                .map_err(|error| error.to_string())?,
-        };
-        self.agent(completion_model)
+                .map_err(|error| error.to_string()),
+        }
     }
 
-    /// The assistant on `model`, with one tool per app command.
-    fn agent(&self, model: DynModel<Completion>) -> Result<Agent, String> {
+    /// The assistant on `model`, with one tool per app command, following
+    /// the AGENTS.md `instructions` section.
+    fn agent(&self, model: DynModel<Completion>, instructions: &str) -> Result<Agent, String> {
         let tools = tool_specs()
             .into_iter()
             .map(|spec| {
@@ -295,7 +325,7 @@ impl Worker {
 
         Ok(AgentBuilder::new(model)
             .name("json-diff assistant")
-            .preamble(PREAMBLE)
+            .preamble(format!("{PREAMBLE}{instructions}"))
             .default_max_turns(30)
             .dynamic_tools(tools)
             .build())
@@ -387,7 +417,7 @@ mod tests {
             cancel: Arc::new(Notify::new()),
         };
         let agent = worker
-            .agent(Model::new(MockScript::new("scripted"), Scripted).into())
+            .agent(Model::new(MockScript::new("scripted"), Scripted).into(), "")
             .unwrap();
 
         // Stands in for the UI thread: apply the one expected tool call.

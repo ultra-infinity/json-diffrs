@@ -5,6 +5,7 @@
 //! have exactly the same capabilities. Nothing here touches egui; actions that
 //! need the window are queued in [`AppState::window_requests`].
 
+use crate::agents_md::AgentsMd;
 use json_diff_core::{
     DiffOptions, Folds, JsonDiff, PairEntry, PairStatus, compare_folders, diff_json_texts_folded,
     scan_json_files,
@@ -165,6 +166,19 @@ pub enum Command {
     CollapseAll,
     /// Collapse everything except the containers leading to a change.
     RevealChanges,
+    /// Give the assistant an extra instructions file (an AGENTS.md).
+    AddAgentsMd {
+        path: PathBuf,
+    },
+    /// Forget an instructions file added with `AddAgentsMd`.
+    RemoveAgentsMd {
+        path: PathBuf,
+    },
+    /// Use or ignore one instructions file, found or added.
+    SetAgentsMdEnabled {
+        path: PathBuf,
+        enabled: bool,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -219,6 +233,8 @@ pub struct AppState {
     pub show_agent: bool,
     pub status: Option<Status>,
     pub window_requests: Vec<WindowAction>,
+    /// Instruction files for the assistant.
+    pub agents_md: AgentsMd,
 }
 
 impl Default for AppState {
@@ -239,6 +255,7 @@ impl Default for AppState {
             show_agent: true,
             status: None,
             window_requests: Vec::new(),
+            agents_md: AgentsMd::default(),
         }
     }
 }
@@ -251,7 +268,33 @@ impl AppState {
         if let Err(error) = &result {
             self.set_status(error.clone(), true);
         }
+        // Opened folders and files decide which AGENTS.md files apply.
+        let side = |side: Side| {
+            (
+                self.folders[side.index()]
+                    .as_ref()
+                    .map(|folder| folder.root.as_path()),
+                self.docs[side.index()].path.as_deref(),
+            )
+        };
+        let sides = [side(Side::Left), side(Side::Right)];
+        self.agents_md.refresh(sides);
         result
+    }
+
+    /// The assistant's instruction files, for `get_state` and tool results.
+    fn agents_md_files(&self) -> Vec<Value> {
+        self.agents_md
+            .files()
+            .into_iter()
+            .map(|file| {
+                json!({
+                    "path": file.path,
+                    "source": file.source.as_str(),
+                    "enabled": file.enabled,
+                })
+            })
+            .collect()
     }
 
     fn run(&mut self, command: Command) -> Result<Value, String> {
@@ -404,6 +447,22 @@ impl AppState {
                 Ok(json!({ "window": action }))
             }
             Command::GetState => Ok(self.describe()),
+            Command::AddAgentsMd { path } => {
+                let path = self.agents_md.add(&path)?;
+                self.set_status(
+                    format!("Assistant instructions: added {}", path.display()),
+                    false,
+                );
+                Ok(json!({ "added": path, "agents_md": self.agents_md_files() }))
+            }
+            Command::RemoveAgentsMd { path } => {
+                self.agents_md.remove(&path)?;
+                Ok(json!({ "removed": path, "agents_md": self.agents_md_files() }))
+            }
+            Command::SetAgentsMdEnabled { path, enabled } => {
+                self.agents_md.set_enabled(&path, enabled)?;
+                Ok(json!({ "agents_md": self.agents_md_files() }))
+            }
             Command::ListFiles { side } => {
                 let folder = self.folders[side.index()]
                     .as_ref()
@@ -724,6 +783,7 @@ impl AppState {
                 "default": if self.folds.expands_by_default() { "expanded" } else { "collapsed" },
                 "exceptions": self.folds.exceptions(),
             },
+            "agents_md": self.agents_md_files(),
             "status": self.status.as_ref().map(|status| &status.text),
         })
     }
@@ -933,5 +993,38 @@ mod tests {
             })
             .unwrap();
         assert!(state.apply(Command::ExpandAll).is_err());
+    }
+
+    #[test]
+    fn opened_folders_bring_their_agents_md() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        std::fs::write(root.join("AGENTS.md"), "Version bumps are expected.").unwrap();
+        std::fs::write(root.join("a.json"), "{}").unwrap();
+
+        let mut state = AppState::default();
+        assert_eq!(state.describe()["agents_md"], json!([]));
+        state
+            .apply(Command::OpenFolder {
+                side: Side::Left,
+                path: root.clone(),
+            })
+            .unwrap();
+        let path = root.join("AGENTS.md");
+        assert_eq!(
+            state.describe()["agents_md"],
+            json!([{ "path": path, "source": "found", "enabled": true }])
+        );
+        assert!(state.agents_md.prompt_section().contains("Version bumps"));
+
+        // The assistant's tools switch it off like the panel's checkbox.
+        state
+            .apply(Command::SetAgentsMdEnabled {
+                path: path.clone(),
+                enabled: false,
+            })
+            .unwrap();
+        assert_eq!(state.agents_md.prompt_section(), "");
+        assert!(state.apply(Command::RemoveAgentsMd { path }).is_err());
     }
 }

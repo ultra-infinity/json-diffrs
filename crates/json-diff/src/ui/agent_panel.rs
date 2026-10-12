@@ -1,12 +1,16 @@
 //! The assistant panel: model settings, the conversation, and a live log of
 //! every tool call the agent makes.
 
+use super::FilePicker;
 use super::Palette;
 use crate::agent::{
     AgentHandle, AgentRequest, ModelChoice, api_key_env, catalog_models, known_providers,
     split_reference,
 };
+use crate::agents_md::Source;
+use crate::state::{AppState, Command};
 use eframe::egui::{self, PopupCloseBehavior, RichText, Ui};
+use std::path::Path;
 
 pub enum ChatEntry {
     User(String),
@@ -85,6 +89,9 @@ pub fn agent_panel(
     ui: &mut Ui,
     panel: &mut AgentPanelState,
     agent: &AgentHandle,
+    state: &AppState,
+    picker: &mut FilePicker,
+    commands: &mut Vec<Command>,
     palette: &Palette,
 ) {
     ui.horizontal(|ui| {
@@ -129,6 +136,7 @@ pub fn agent_panel(
             panel.connect(agent);
         }
     });
+    instructions(ui, state, picker, commands);
     ui.separator();
 
     let input_height = 64.0;
@@ -188,9 +196,90 @@ pub fn agent_panel(
             panel.input.clear();
             panel.entries.push(ChatEntry::User(prompt.clone()));
             panel.busy = true;
-            agent.send(AgentRequest::Prompt(prompt));
+            agent.send(AgentRequest::Prompt {
+                text: prompt,
+                instructions: state.agents_md.prompt_section(),
+            });
         }
     });
+}
+
+/// The AGENTS.md files the assistant follows: those found next to the
+/// opened folders and files, and any the user added. Each can be switched
+/// off; added ones can be removed.
+fn instructions(
+    ui: &mut Ui,
+    state: &AppState,
+    picker: &mut FilePicker,
+    commands: &mut Vec<Command>,
+) {
+    let files = state.agents_md.files();
+    let enabled = files.iter().filter(|file| file.enabled).count();
+    let title = match files.len() {
+        0 => "Instructions (AGENTS.md)".to_owned(),
+        total if enabled == total => format!("Instructions (AGENTS.md): {total}"),
+        total => format!("Instructions (AGENTS.md): {enabled} of {total}"),
+    };
+    egui::CollapsingHeader::new(title)
+        .id_salt("agents_md")
+        .show(ui, |ui| {
+            if files.is_empty() {
+                ui.label(
+                    RichText::new(
+                        "An AGENTS.md next to the opened folders or files is used \
+                         automatically. You can also add one yourself.",
+                    )
+                    .weak(),
+                );
+            }
+            for file in &files {
+                ui.horizontal(|ui| {
+                    let mut on = file.enabled;
+                    let label = short_path(&file.path);
+                    if ui
+                        .checkbox(&mut on, label)
+                        .on_hover_text(file.path.display().to_string())
+                        .changed()
+                    {
+                        commands.push(Command::SetAgentsMdEnabled {
+                            path: file.path.clone(),
+                            enabled: on,
+                        });
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if file.source == Source::Added
+                            && ui.small_button("×").on_hover_text("Remove").clicked()
+                        {
+                            commands.push(Command::RemoveAgentsMd {
+                                path: file.path.clone(),
+                            });
+                        }
+                        ui.label(RichText::new(file.source.as_str()).small().weak());
+                    });
+                });
+            }
+            if ui
+                .button("Add AGENTS.md…")
+                .on_hover_text("Pick an instructions file for the assistant to follow")
+                .clicked()
+            {
+                picker.open_agents_md(state);
+            }
+        });
+}
+
+/// `parent/AGENTS.md`: enough to tell instruction files apart.
+fn short_path(path: &Path) -> String {
+    let name = path.file_name().map(|name| name.to_string_lossy());
+    let parent = path
+        .parent()
+        .and_then(Path::file_name)
+        .map(|name| name.to_string_lossy());
+    match (parent, name) {
+        (Some(parent), Some(name)) => format!("{parent}/{name}"),
+        (None, Some(name)) => name.into_owned(),
+        _ => path.display().to_string(),
+    }
 }
 
 /// Width of the "Provider"/"Model" label column.

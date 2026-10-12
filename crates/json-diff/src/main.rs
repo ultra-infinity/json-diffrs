@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod agent;
+mod agents_md;
 mod samples;
 mod state;
 mod tools;
@@ -250,7 +251,15 @@ impl eframe::App for JsonDiffApp {
                 .default_size(340.0)
                 .size_range(240.0..=700.0)
                 .show_inside(ui, |ui| {
-                    ui::agent_panel(ui, &mut self.chat, &self.agent, &palette)
+                    ui::agent_panel(
+                        ui,
+                        &mut self.chat,
+                        &self.agent,
+                        &self.state,
+                        &mut self.picker,
+                        &mut commands,
+                        &palette,
+                    )
                 });
         }
 

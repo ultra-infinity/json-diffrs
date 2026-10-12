@@ -66,6 +66,20 @@ struct FolderArgs {
 }
 
 #[derive(Deserialize, JsonSchema)]
+struct InstructionsArgs {
+    /// Absolute path of the instructions file. `~` is not expanded.
+    path: PathBuf,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct InstructionsToggleArgs {
+    /// Path of the instructions file, as listed under `agents_md` by
+    /// `get_state`.
+    path: PathBuf,
+    enabled: bool,
+}
+
+#[derive(Deserialize, JsonSchema)]
 struct FileArgs {
     side: Side,
     /// A path relative to that side's open folder (as listed by
@@ -217,6 +231,12 @@ tools! {
         NoArgs => |_| Command::CollapseAll;
     "reveal_changes": "Fold everything except the objects and arrays that lead to a change, so every change is visible.",
         NoArgs => |_| Command::RevealChanges;
+    "add_agents_md": "Add an instructions file (an AGENTS.md or any Markdown file) whose contents you will follow from the next message on. Same as the assistant panel's 'Add AGENTS.md…' button. Only when the user asks.",
+        InstructionsArgs => |a| Command::AddAgentsMd { path: a.path };
+    "remove_agents_md": "Remove an instructions file that was added with add_agents_md. Files found next to the opened folders cannot be removed, only switched off.",
+        InstructionsArgs => |a| Command::RemoveAgentsMd { path: a.path };
+    "set_agents_md_enabled": "Use (enabled=true) or ignore (enabled=false) one of the instruction files listed under agents_md in get_state. Only when the user asks.",
+        InstructionsToggleArgs => |a| Command::SetAgentsMdEnabled { path: a.path, enabled: a.enabled };
 }
 
 #[cfg(test)]
