@@ -216,7 +216,7 @@ function menus(
         { label: "What's New…", action: dialogs.whatsNew },
         ...desktop({ label: "Check for Updates…", action: () => updates.check(true) }),
         { label: "Licenses…", action: dialogs.showLicenses },
-        // The GPL's offer of the source, for the copy running in the page.
+        // Where the code of the copy running in the page comes from.
         ...(WEB ? [{ label: "Source Code…", action: () => void openRelease(SOURCE_URL) }] : []),
         "separator",
         { label: `json-diff ${updates.version}`, disabled: true, action: () => {} },

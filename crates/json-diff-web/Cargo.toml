@@ -1,6 +1,6 @@
 [package]
 name = "json-diff-web"
-version = "0.6.0"
+version = "0.6.1"
 edition = "2024"
 description = "json-diff in the browser: the app state compiled to WebAssembly"
 authors.workspace = true

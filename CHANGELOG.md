@@ -9,6 +9,11 @@ rename it to `## <version> - <date>`; `scripts/release.sh` refuses a version
 with no entry.
 Keep entries to `-` bullets, with `**bold**` and `` `code` `` at most.
 
+## 0.6.1 - 2026-10-13
+
+- json-diff is now released under the MIT License. Versions up to 0.6.0 were
+  released under the GNU GPL, version 3 or later.
+
 ## 0.6.0 - 2026-10-13
 
 - **json-diff on the web:** the same diff, folding, ignored keys and PDF

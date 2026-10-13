@@ -297,10 +297,8 @@ GitHub Actions** set once in the repository.
 
 ## License
 
-json-diff is free software: you can redistribute it and/or modify it under the terms of
-the GNU General Public License as published by the Free Software Foundation, either
-version 3 of the License, or (at your option) any later version. See
-[LICENSE](LICENSE).
+json-diff is released under the [MIT License](LICENSE). Versions up to 0.6.0 were
+released under the GNU GPL, version 3 or later.
 
 It includes third-party libraries under their own licenses, listed in
 [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt). The same list ships with every

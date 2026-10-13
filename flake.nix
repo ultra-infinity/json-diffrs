@@ -213,7 +213,7 @@
               meta = {
                 description = "Side-by-side JSON diff with folder comparison and an AI assistant";
                 homepage = "https://github.com/ultra-infinity/json-diffrs";
-                license = lib.licenses.gpl3Plus;
+                license = lib.licenses.mit;
                 mainProgram = "json-diff";
               };
             }

@@ -1,6 +1,6 @@
 [package]
 name = "json-diff-app"
-version = "0.6.0"
+version = "0.6.1"
 edition = "2024"
 description = "json-diff's app state, commands and PDF reports, shared by the desktop and web apps"
 authors.workspace = true

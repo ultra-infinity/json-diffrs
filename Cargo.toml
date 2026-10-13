@@ -4,7 +4,7 @@ members = ["crates/*"]
 
 [workspace.package]
 authors = ["Omkar Mohanty"]
-license = "GPL-3.0-or-later"
+license = "MIT"
 repository = "https://github.com/ultra-infinity/json-diffrs"
 
 

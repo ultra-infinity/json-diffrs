@@ -41,7 +41,7 @@
       "icons/icon.ico"
     ],
     "publisher": "Omkar Mohanty",
-    "copyright": "Copyright © 2026 Omkar Mohanty. Licensed under the GNU GPL v3 or later."
+    "copyright": "Copyright © 2026 Omkar Mohanty. Licensed under the MIT License."
   },
   "plugins": {
     "updater": {
