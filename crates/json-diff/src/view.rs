@@ -7,7 +7,10 @@
 
 use crate::agents_md::InstructionFile;
 use crate::state::{AppState, Side, Theme, ViewMode};
-use json_diff_core::{DiffOptions, FoldMark, Hunk, LineStatus, PairStatus, ParseError, SideBySide};
+use json_diff_core::{
+    DiffOptions, FoldMark, Hunk, IgnoreRule, LineStatus, PairStatus, ParseError, SideBySide,
+    last_key,
+};
 use serde::Serialize;
 use std::ops::Range;
 use std::path::Path;
@@ -36,6 +39,10 @@ pub struct View {
     pub foldable: bool,
     /// Semantic changes; `None` unless both sides parsed.
     pub semantic_changes: Option<usize>,
+    /// Keys whose changes are ignored.
+    pub ignored: Vec<IgnoredView>,
+    /// Semantic changes left out because their key is ignored.
+    pub ignored_changes: usize,
     pub added_lines: usize,
     pub removed_lines: usize,
     /// `original ↔ modified — json-diff`.
@@ -133,6 +140,25 @@ pub struct HunkView {
     pub right: [usize; 2],
     pub left_status: LineStatus,
     pub right_status: LineStatus,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IgnoredView {
+    /// `/a/b` or `"name" everywhere`.
+    pub label: String,
+    pub rule: IgnoreRule,
+}
+
+/// The key under a line, for the diff's right-click menu.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KeyAt {
+    pub pointer: String,
+    /// The key's name; `None` for an array element.
+    pub key: Option<String>,
+    /// The rule that already ignores it, if any.
+    pub ignored_by: Option<IgnoredView>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -241,6 +267,8 @@ pub fn snapshot(state: &mut AppState) -> View {
         agents_md: state.agents_md.files().iter().map(agents_md_view).collect(),
         foldable: diff.is_foldable(),
         semantic_changes: diff.changes.as_ref().map(Vec::len),
+        ignored: state.ignored.iter().map(ignored_view).collect(),
+        ignored_changes: diff.ignored_changes,
         added_lines: view.added_lines(),
         removed_lines: view.removed_lines(),
         title: format!(
@@ -249,6 +277,44 @@ pub fn snapshot(state: &mut AppState) -> View {
             state.docs[1].label()
         ),
     }
+}
+
+fn ignored_view(rule: &IgnoreRule) -> IgnoredView {
+    IgnoredView {
+        label: rule.to_string(),
+        rule: rule.clone(),
+    }
+}
+
+/// The key on 1-based `line` of one side, or `None` for the document's own
+/// brackets and in plain-text mode.
+pub fn key_at(state: &AppState, side: Side, line: usize) -> Option<KeyAt> {
+    let view = &state.diff.view;
+    let left = side == Side::Left;
+    let pointer = view.pointer(left, line.checked_sub(1)?)?;
+    if pointer.is_empty() {
+        return None;
+    }
+    // A member's first line starts with its key; an array element's has
+    // none, and its last pointer token is an index.
+    let lines = if left { &view.left } else { &view.right };
+    let first = (0..lines.len()).find(|&index| view.pointer(left, index) == Some(pointer))?;
+    let key = last_key(pointer).filter(|key| {
+        let quoted = serde_json::Value::String(key.clone()).to_string();
+        lines[first]
+            .trim_start()
+            .starts_with(&format!("{quoted}: "))
+    });
+    let ignored_by = state
+        .ignored
+        .iter()
+        .find(|rule| state.diff.ignores(rule, left, pointer))
+        .map(ignored_view);
+    Some(KeyAt {
+        pointer: pointer.to_owned(),
+        key,
+        ignored_by,
+    })
 }
 
 /// The lines of `hunk` that changed, on each side: the hunk without the
@@ -413,6 +479,81 @@ mod tests {
                 .unwrap();
         }
         state
+    }
+
+    #[test]
+    fn right_click_finds_the_key_and_ignoring_it_hides_its_change() {
+        let mut state = AppState::default();
+        for (side, text) in [
+            (
+                Side::Left,
+                r#"{"list": [{"id": "a", "v": 1, "at": 1}], "svc": {"port": 1}}"#,
+            ),
+            (
+                Side::Right,
+                r#"{"list": [{"new": 0}, {"id": "a", "v": 1, "at": 2}], "svc": {"port": 2}}"#,
+            ),
+        ] {
+            let text = text.into();
+            state.apply(Command::SetText { side, text }).unwrap();
+        }
+        state.apply(Command::ExpandAll).unwrap();
+        let line_of = |state: &AppState, left: bool, needle: &str| {
+            let lines = if left {
+                &state.diff.view.left
+            } else {
+                &state.diff.view.right
+            };
+            lines.iter().position(|line| line.contains(needle)).unwrap() + 1
+        };
+
+        let port = key_at(&state, Side::Left, line_of(&state, true, "port")).unwrap();
+        assert_eq!(
+            (port.pointer.as_str(), port.key.as_deref()),
+            ("/svc/port", Some("port"))
+        );
+        // An array element has a pointer but no key name.
+        let element = key_at(&state, Side::Right, line_of(&state, false, "\"new\"") - 1).unwrap();
+        assert_eq!((element.pointer.as_str(), element.key), ("/list/0", None));
+        assert!(
+            key_at(&state, Side::Left, 1).is_none(),
+            "the document itself"
+        );
+
+        // Ignoring on the modified side keeps the original's pointer.
+        let at = line_of(&state, false, "\"at\"");
+        let pointer = key_at(&state, Side::Right, at).unwrap().pointer;
+        assert_eq!(pointer, "/list/1/at");
+        state
+            .apply(Command::IgnoreChanges {
+                side: Side::Right,
+                pointer: Some(pointer),
+                key: None,
+            })
+            .unwrap();
+        assert_eq!(state.ignored_labels(), ["/list/0/at"]);
+        let view = snapshot(&mut state);
+        assert_eq!(view.ignored_changes, 1);
+        assert_eq!(view.ignored[0].label, "/list/0/at");
+        let ignored = key_at(&state, Side::Right, line_of(&state, false, "\"at\"")).unwrap();
+        assert_eq!(ignored.ignored_by.unwrap().label, "/list/0/at");
+
+        // The assistant hears about it with every message.
+        let section = state.ignored_prompt_section();
+        assert!(
+            section.contains("- /list/0/at") && section.contains("1 in the current comparison")
+        );
+        let changes = state
+            .apply(Command::GetChanges {
+                offset: 0,
+                limit: 10,
+            })
+            .unwrap();
+        assert_eq!(changes["ignored"]["changes"], 1);
+
+        state.apply(Command::StopIgnoring { rule: None }).unwrap();
+        assert_eq!(snapshot(&mut state).ignored_changes, 0);
+        assert!(state.ignored_prompt_section().is_empty());
     }
 
     #[test]

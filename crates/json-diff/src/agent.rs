@@ -44,7 +44,9 @@ to the user as they happen. Start with get_state to see what is open. To compare
 folders, open both and use list_pairs, then open_pair. To explain a diff, prefer \
 get_structural_changes (JSON pointers with old and new values) and use next_change / \
 get_change to show the user the corresponding lines. Answer concisely and refer to \
-values by their JSON pointer. Only use export_pdf when the user explicitly asks for a \
+values by their JSON pointer. The user can ignore changes to keys (right-click, or \
+ignore_changes when they ask); those changes are left out everywhere, and you say so \
+when you summarise. Only use export_pdf when the user explicitly asks for a \
 PDF; it asks them where to save it.";
 
 /// The tool results shown in the chat log are cut to this many characters.

@@ -13,13 +13,19 @@ show up as noise. It runs on Windows and Linux.
 
 - **Side-by-side diff.** Changed lines are red on the original side and green on the
   modified side, with the changed characters highlighted. Ribbons connect each change
-  to where it belongs on the other side.
+  to where it belongs on the other side. Drag the ribbon gutter to give either side
+  more room; double-click it to split evenly again.
 - **Structural comparison.** Changes are matched by JSON structure, not line position.
   Records in an array are paired by similarity, so a record inserted next to an edited
   one shows as one addition and one edit, not two edits.
 - **Folding for large files.** Documents open with only their top-level keys showing. A
   folded key that hides changes is coloured, and **Reveal changes** opens just the
   paths that lead to them.
+- **Ignore keys.** Right-click a key in the diff to ignore its changes: just that key,
+  or every key with its name (handy for timestamps). Ignored changes leave the diff,
+  the change count, the assistant's answers and PDF reports, and folders whose files
+  differ only in ignored keys count as identical. The **N ignored** button in the
+  toolbar lists them and counts them again. They are remembered between runs.
 - **Folder comparison.** Open two folders, original and modified, in the split
   explorer. Files with the same relative path are paired and marked modified (M), only
   in the original (D) or only in the modified folder (A).
@@ -46,7 +52,9 @@ Runtime", install it from [Microsoft](https://developer.microsoft.com/microsoft-
 json-diff checks for a new version when it starts, and **Help → Check for Updates…**
 checks on demand. When there is one, a bar at the top offers **Update now**: the new
 installer is downloaded, its signature checked, and installed in place. Open json-diff
-again once the installer finishes.
+again once the installer finishes. **What's new** in the bar lists the changes before
+you install, and the first start after an update shows them again. **Help → What's
+New** lists every release's changes ([CHANGELOG.md](CHANGELOG.md)).
 
 On Linux the same bar tells you about new versions; update with your package manager,
 for example `nix profile upgrade json-diff`.
@@ -120,7 +128,8 @@ Click the arrow beside a line number to fold or unfold a key. **Expand all**,
   each change. You can choose 10 lines or the whole documents instead.
 - **Paper:** US Letter or A4.
 
-The report always includes everything, whatever is folded on screen.
+The report always includes everything, whatever is folded on screen, except changes to
+ignored keys; its first page lists the ignored keys and how many changes they hid.
 
 ## The assistant
 
@@ -142,6 +151,8 @@ aren't remembered.
 json-diff also remembers the provider and model, and reconnects to them when it
 starts. To choose the model from outside instead, set `JSON_DIFF_MODEL`, for example
 `JSON_DIFF_MODEL=openai:gpt-5.5`.
+
+The assistant leaves out changes to ignored keys as well, and tells you when it has.
 
 Every tool call the assistant makes is shown in the panel as it happens. It can open
 files and change the view, but it can't modify or delete anything on disk. It can
@@ -180,7 +191,7 @@ editors.
   (line colours, changed characters, folds and how the two sides line up all come from
   Rust) and sends every click back to Rust.
 
-Settings (theme, zoom, panels, diff options, panel widths, the assistant's model) are
+Settings (theme, zoom, panels, diff options, ignored keys, panel widths, the assistant's model) are
 saved to `settings.json` in the OS config folder (`~/.config/io.github.ultra-infinity.json-diff`
 on Linux, `%APPDATA%\io.github.ultra-infinity.json-diff` on Windows).
 
@@ -243,14 +254,17 @@ Keep `~/.tauri/json-diff.key` and its password safe and out of git. Without them
 cannot publish updates that installed copies will accept.
 
 **Each release:** raise `version` in [`crates/json-diff/Cargo.toml`](crates/json-diff/Cargo.toml)
-(and `ui/package.json`), commit, then run:
+(and `ui/package.json`), and in [`CHANGELOG.md`](CHANGELOG.md) rename **Unreleased** to
+`## <version> - <date>`. The app shows that entry after users update, and the tests
+fail until the current version has one. Commit, then run:
 
 ```sh
 nix develop -c scripts/release.sh
 ```
 
-It builds and signs the installer, writes the `latest.json` the updater reads, and
-asks before tagging the version and publishing the GitHub release.
+It builds and signs the installer, writes the `latest.json` the updater reads (with the
+changelog entry as its notes), and asks before tagging the version and publishing the
+GitHub release, whose notes are the same entry.
 
 ## License
 

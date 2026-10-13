@@ -93,6 +93,41 @@ struct ExportArgs {
 }
 
 #[derive(Deserialize, JsonSchema)]
+struct IgnoreArgs {
+    /// Ignore the node at this JSON pointer and everything inside it, e.g.
+    /// `/services/0/port`.
+    pointer: Option<String>,
+    /// Or: ignore every key with this name, at any depth, e.g. `updatedAt`.
+    key: Option<String>,
+    /// The document `pointer` comes from (default `left`, the original).
+    side: Option<Side>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct StopIgnoringArgs {
+    /// A pointer passed to ignore_changes.
+    pointer: Option<String>,
+    /// A key name passed to ignore_changes.
+    key: Option<String>,
+    /// Count every ignored key's changes again.
+    #[serde(default)]
+    all: bool,
+}
+
+/// The rule `stop_ignoring` names; `None` for all of them.
+fn stop_ignoring(args: StopIgnoringArgs) -> Result<Command, serde_json::Error> {
+    use json_diff_core::IgnoreRule;
+    use serde::de::Error;
+    let rule = match (args.pointer, args.key, args.all) {
+        (Some(pointer), None, false) => Some(IgnoreRule::Pointer { pointer }),
+        (None, Some(key), false) => Some(IgnoreRule::Key { key }),
+        (None, None, true) => None,
+        _ => return Err(serde_json::Error::custom("give one of pointer, key or all")),
+    };
+    Ok(Command::StopIgnoring { rule })
+}
+
+#[derive(Deserialize, JsonSchema)]
 struct FileArgs {
     side: Side,
     /// A path relative to that side's open folder (as listed by
@@ -216,7 +251,7 @@ tools! {
         IndexArgs => |a| Command::GoToChange { index: a.index };
     "get_change": "Return the lines of one changed block, with each line's status (unchanged, added = green, removed = red), without moving the view.",
         IndexArgs => |a| Command::GetHunk { index: a.index };
-    "get_structural_changes": "List semantic changes as JSON pointers (added / removed / modified) with old and new values. Needs both documents to be valid JSON.",
+    "get_structural_changes": "List semantic changes as JSON pointers (added / removed / modified) with old and new values. Needs both documents to be valid JSON. Changes to ignored keys (see get_state's `ignoring`) are left out.",
         PageArgs => |a| Command::GetChanges { offset: a.offset, limit: a.limit };
     "get_text": "Return the raw text of one side's document (truncated at 100 kB).",
         SideArgs => |a| Command::GetText { side: a.side };
@@ -250,6 +285,10 @@ tools! {
         InstructionsArgs => |a| Command::RemoveAgentsMd { path: a.path };
     "set_agents_md_enabled": "Use (enabled=true) or ignore (enabled=false) one of the instruction files listed under agents_md in get_state. Only when the user asks.",
         InstructionsToggleArgs => |a| Command::SetAgentsMdEnabled { path: a.path, enabled: a.enabled };
+    "ignore_changes": "Stop counting changes to a key: the node at a JSON pointer, or every key with a name (e.g. timestamps). Its changes leave the diff, the change list and PDF reports, and it stays ignored for later comparisons until stop_ignoring. Same as right-clicking a key. Only when the user asks.",
+        IgnoreArgs => |a| Command::IgnoreChanges { side: a.side.unwrap_or(Side::Left), pointer: a.pointer, key: a.key };
+    "stop_ignoring": "Count an ignored key's changes again (pass the pointer or key given to ignore_changes), or all of them with all=true.",
+        StopIgnoringArgs => |a| stop_ignoring(a)?;
     "export_pdf": "Export the comparison as a PDF report: every change by JSON pointer with old and new values, then the side-by-side diff. Only call this when the user explicitly asks for a PDF. It opens a save dialog where the user chooses the file; if they cancel, nothing is written. Same as File > Export as PDF.",
         ExportArgs => |a| Command::ExportPdf {
             path: None,
@@ -302,5 +341,18 @@ mod tests {
             Command::NextChange
         );
         assert!(parse("open_folder", json!({"side": "middle", "path": "/"})).is_err());
+        assert_eq!(
+            parse("ignore_changes", json!({"key": "updatedAt"})).unwrap(),
+            Command::IgnoreChanges {
+                side: Side::Left,
+                pointer: None,
+                key: Some("updatedAt".into())
+            }
+        );
+        assert_eq!(
+            parse("stop_ignoring", json!({"all": true})).unwrap(),
+            Command::StopIgnoring { rule: None }
+        );
+        assert!(parse("stop_ignoring", json!({})).is_err(), "names nothing");
     }
 }

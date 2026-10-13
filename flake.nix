@@ -97,6 +97,7 @@
                 (craneLib.fileset.commonCargoSources ./.)
                 ./LICENSE
                 ./THIRD_PARTY_NOTICES.txt
+                ./CHANGELOG.md
                 ./crates/json-diff/tauri.conf.json
                 ./crates/json-diff/capabilities
                 ./crates/json-diff/icons

@@ -3,10 +3,13 @@
 //! changes and a few lines of context around each.
 //!
 //! The report always comes from the fully expanded documents, whatever is
-//! folded on screen, so nothing in it hides behind `{…}`.
+//! folded on screen, so nothing in it hides behind `{…}`. Changes to keys the
+//! user ignores are left out, as on screen; the report says which keys.
 
 use crate::state::AppState;
-use json_diff_core::{ChangeKind, DiffOptions, LineStatus, SideBySide, diff_json_texts};
+use json_diff_core::{
+    ChangeKind, DiffOptions, Folds, LineStatus, SideBySide, diff_json_texts_ignoring,
+};
 use std::ops::Range;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -20,6 +23,10 @@ pub struct Report {
     /// Original (index 0) and modified (index 1).
     pub sources: [Source; 2],
     pub options: DiffOptions,
+    /// Ignored keys, as `/a/b` or `"name" everywhere`.
+    pub ignored: Vec<String>,
+    /// Changes left out because their key is ignored.
+    pub ignored_changes: usize,
     /// `json-diff 0.3.0`.
     pub producer: String,
     /// When the report was made, e.g. `2026-10-13 14:05 UTC`.
@@ -99,7 +106,13 @@ pub struct Line {
 /// Builds the report for what `state` compares. `context` is how many
 /// unchanged lines to keep around each change; `None` keeps everything.
 pub fn build(state: &AppState, context: Option<usize>, generated: SystemTime) -> Report {
-    let diff = diff_json_texts(&state.docs[0].text, &state.docs[1].text, &state.options);
+    let diff = diff_json_texts_ignoring(
+        &state.docs[0].text,
+        &state.docs[1].text,
+        &state.options,
+        &Folds::expanded(),
+        &state.ignored,
+    );
     let view = &diff.view;
     let source = |index: usize| {
         let doc = &state.docs[index];
@@ -151,6 +164,8 @@ pub fn build(state: &AppState, context: Option<usize>, generated: SystemTime) ->
         title: format!("{} ↔ {}", state.docs[0].label(), state.docs[1].label()),
         sources: [source(0), source(1)],
         options: state.options,
+        ignored: state.ignored_labels(),
+        ignored_changes: diff.ignored_changes,
         producer: format!("json-diff {}", env!("CARGO_PKG_VERSION")),
         generated: utc_timestamp(generated),
         changes,
@@ -256,7 +271,11 @@ fn full_rows(view: &SideBySide) -> Vec<FullRow> {
 
 fn line(view: &SideBySide, left: bool, index: usize, hunk: Option<usize>) -> Line {
     let raw = if left { &view.left } else { &view.right }[index].as_str();
+    let status = view.status(left)[index];
+    // Uncoloured lines in a change (a new comma, an ignored key) get no
+    // highlighted characters either.
     let changed = hunk
+        .filter(|_| status != LineStatus::Unchanged)
         .map(|hunk| {
             let hunk = &view.hunks[hunk];
             let (range, inline) = if left {
@@ -282,7 +301,7 @@ fn line(view: &SideBySide, left: bool, index: usize, hunk: Option<usize>) -> Lin
             .chars()
             .map(|c| if c.is_control() { ' ' } else { c })
             .collect(),
-        status: view.status(left)[index],
+        status,
         changed,
     }
 }
@@ -379,6 +398,60 @@ pub(crate) mod tests {
             (ChangeKind::Added, None)
         );
         assert_eq!(report.title, "(unsaved text) ↔ (unsaved text)");
+    }
+
+    #[test]
+    fn ignored_keys_are_left_out_of_the_report() {
+        let mut state = sample();
+        let all = build(&state, Some(3), UNIX_EPOCH);
+        for (pointer, key) in [(Some("/version"), None), (None, Some("tracing"))] {
+            state
+                .apply(Command::IgnoreChanges {
+                    side: Side::Left,
+                    pointer: pointer.map(Into::into),
+                    key: key.map(Into::into),
+                })
+                .unwrap();
+        }
+        let report = build(&state, Some(3), UNIX_EPOCH);
+        let Changes::Structural(changes) = &report.changes else {
+            panic!("the sample is valid JSON");
+        };
+        assert!(
+            changes
+                .iter()
+                .all(|row| row.pointer != "/version" && !row.pointer.starts_with("/tracing")),
+            "{changes:?}"
+        );
+        assert_eq!(report.ignored, ["/version", "\"tracing\" everywhere"]);
+        assert!(report.ignored_changes >= 2);
+        let Changes::Structural(before) = &all.changes else {
+            unreachable!()
+        };
+        assert_eq!(changes.len() + report.ignored_changes, before.len());
+
+        // Nor do their lines show as changes on the side-by-side pages.
+        let coloured = report
+            .blocks
+            .iter()
+            .flat_map(|block| &block.rows)
+            .filter_map(|row| match row {
+                Row::Lines { left, right } => Some([left, right]),
+                Row::Skipped(_) => None,
+            })
+            .flatten()
+            .flatten()
+            .filter(|line| line.status != LineStatus::Unchanged || !line.changed.is_empty());
+        for line in coloured {
+            assert!(
+                !line.text.contains("\"version\"") && !line.text.contains("\"tracing\""),
+                "{line:?}"
+            );
+        }
+        assert!(
+            report.totals.blocks < all.totals.blocks,
+            "their blocks are gone"
+        );
     }
 
     #[test]

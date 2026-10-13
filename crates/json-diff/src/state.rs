@@ -9,8 +9,8 @@ use crate::agents_md::AgentsMd;
 use crate::layout::Paper;
 use crate::pdf;
 use json_diff_core::{
-    DiffOptions, Folds, JsonDiff, PairEntry, PairStatus, compare_folders, diff_json_texts_folded,
-    scan_json_files,
+    DiffOptions, Folds, IgnoreRule, JsonDiff, PairEntry, PairStatus, compare_folders,
+    diff_json_texts_ignoring, scan_json_files,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -181,6 +181,17 @@ pub enum Command {
         path: PathBuf,
         enabled: bool,
     },
+    /// Stop treating a key's changes as changes: the node at `pointer` (as
+    /// `side` has it), or every key named `key`. Exactly one is given.
+    IgnoreChanges {
+        side: Side,
+        pointer: Option<String>,
+        key: Option<String>,
+    },
+    /// Count an ignored key's changes again; `None`: every ignored key.
+    StopIgnoring {
+        rule: Option<IgnoreRule>,
+    },
     /// Writes a PDF report: the list of changes, then the side-by-side diff
     /// with `context` unchanged lines around each change (`None`: whole
     /// documents). `path: None` means the user has yet to choose the file;
@@ -246,6 +257,8 @@ pub struct AppState {
     pub window_requests: Vec<WindowAction>,
     /// Instruction files for the assistant.
     pub agents_md: AgentsMd,
+    /// Keys whose changes are ignored, in the diff and in reports.
+    pub ignored: Vec<IgnoreRule>,
 }
 
 impl Default for AppState {
@@ -267,6 +280,7 @@ impl Default for AppState {
             status: None,
             window_requests: Vec::new(),
             agents_md: AgentsMd::default(),
+            ignored: Vec::new(),
         }
     }
 }
@@ -537,7 +551,16 @@ impl AppState {
                         })
                     })
                     .collect();
-                Ok(json!({ "total": changes.len(), "offset": offset, "changes": page }))
+                let mut result =
+                    json!({ "total": changes.len(), "offset": offset, "changes": page });
+                if self.diff.ignored_changes > 0 {
+                    result["ignored"] = json!({
+                        "changes": self.diff.ignored_changes,
+                        "keys": self.ignored_labels(),
+                        "note": "These changes are left out because the user ignores these keys. Tell the user they were left out.",
+                    });
+                }
+                Ok(result)
             }
             Command::GetHunk { index } => self.hunk(index),
             Command::GetText { side } => {
@@ -582,7 +605,87 @@ impl AppState {
                 self.refold();
                 Ok(self.summary())
             }
+            Command::IgnoreChanges { side, pointer, key } => {
+                let rule = match (pointer, key) {
+                    (Some(pointer), None) if pointer.is_empty() => {
+                        return Err("the whole document cannot be ignored".into());
+                    }
+                    (Some(pointer), None) => {
+                        // Kept as the original document has it, where it exists.
+                        let pointer = match side {
+                            Side::Left => pointer,
+                            Side::Right => {
+                                self.diff.counterpart(&pointer, false).unwrap_or(pointer)
+                            }
+                        };
+                        IgnoreRule::Pointer { pointer }
+                    }
+                    (None, Some(key)) => IgnoreRule::Key { key },
+                    _ => return Err("give either a pointer or a key name, not both".into()),
+                };
+                if !self.ignored.contains(&rule) {
+                    self.ignored.push(rule.clone());
+                }
+                self.recompute(false);
+                self.update_pairs();
+                self.set_status(
+                    format!(
+                        "Ignoring changes to {rule}: {} ignored in this comparison",
+                        self.diff.ignored_changes
+                    ),
+                    false,
+                );
+                Ok(json!({ "ignoring": rule.to_string(), "summary": self.summary() }))
+            }
+            Command::StopIgnoring { rule } => {
+                match rule {
+                    Some(rule) => {
+                        let before = self.ignored.len();
+                        self.ignored.retain(|ignored| *ignored != rule);
+                        if self.ignored.len() == before {
+                            return Err(format!("{rule} is not ignored"));
+                        }
+                        self.set_status(format!("Changes to {rule} count again"), false);
+                    }
+                    None => {
+                        self.ignored.clear();
+                        self.set_status("Every change counts again", false);
+                    }
+                }
+                self.recompute(false);
+                self.update_pairs();
+                Ok(json!({ "ignoring": self.ignored_labels(), "summary": self.summary() }))
+            }
         }
+    }
+
+    /// The assistant's instructions about ignored keys, sent with each
+    /// message; empty when nothing is ignored.
+    pub fn ignored_prompt_section(&self) -> String {
+        if self.ignored.is_empty() {
+            return String::new();
+        }
+        let keys: String = self
+            .ignored_labels()
+            .iter()
+            .map(|label| format!("- {label}\n"))
+            .collect();
+        format!(
+            "\n\n## Ignored keys\n\n\
+             The user chose to ignore changes to these keys:\n\n{keys}\n\
+             Their changes are left out of the diff, get_structural_changes, the changed \
+             blocks and PDF reports ({count} in the current comparison). Do not report or \
+             analyse changes to them, even where you see them in get_text or get_change. \
+             Whenever you summarise or list changes, say that changes to ignored keys were \
+             left out, and that the user can count them again by right-clicking the key or \
+             asking you (stop_ignoring).\n",
+            count = self.diff.ignored_changes,
+        )
+    }
+
+    /// The ignore rules as people read them.
+    pub fn ignored_labels(&self) -> Vec<String> {
+        self.ignored.iter().map(ToString::to_string).collect()
     }
 
     pub fn set_status(&mut self, text: impl Into<String>, is_error: bool) {
@@ -594,11 +697,12 @@ impl AppState {
 
     /// Recomputes the diff after either document or the options changed.
     pub fn recompute(&mut self, reset_position: bool) {
-        self.diff = diff_json_texts_folded(
+        self.diff = diff_json_texts_ignoring(
             &self.docs[0].text,
             &self.docs[1].text,
             &self.options,
             &self.folds,
+            &self.ignored,
         );
         self.clamp_current(reset_position);
     }
@@ -697,9 +801,13 @@ impl AppState {
 
     fn update_pairs(&mut self) {
         self.pairs = match (&self.folders[0], &self.folders[1]) {
-            (Some(left), Some(right)) => {
-                compare_folders(&left.root, &left.files, &right.root, &right.files)
-            }
+            (Some(left), Some(right)) => compare_folders(
+                &left.root,
+                &left.files,
+                &right.root,
+                &right.files,
+                &self.ignored,
+            ),
             _ => Vec::new(),
         };
     }
@@ -792,6 +900,8 @@ impl AppState {
             "added_lines": self.diff.view.added_lines(),
             "removed_lines": self.diff.view.removed_lines(),
             "structural_changes": self.diff.changes.as_ref().map(Vec::len),
+            "ignored_changes": self.diff.ignored_changes,
+            "ignoring": self.ignored_labels(),
         })
     }
 

@@ -3,17 +3,22 @@
 // characters and the fold markers; this file draws them, scrolls both panes
 // together without filler lines (see `scroll.ts`), and paints the ribbons that
 // join each change to where it belongs on the other side. An insertion's
-// ribbon narrows to the line on the left where the new lines go.
+// ribbon narrows to the line on the left where the new lines go. Dragging
+// the ribbon gutter moves the split between the sides.
 
-import { useEffect, useRef } from "react";
-import type { HunkView, LineStatus, Run, Side, SideView, View } from "../api";
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { keyAt, ruleArgs, type HunkView, type LineStatus, type Run, type Side, type SideView, type View } from "../api";
 import { FONT_FAMILY, FONT_SIZE, LINE_HEIGHT, monaco, monacoTheme } from "../monaco";
 import { AlignedScroll } from "../scroll";
+import { uiSettings, updateUiSettings } from "../uiSettings";
+import { ContextMenu, type MenuEntry } from "./Menu";
 
 type Editor = monaco.editor.IStandaloneCodeEditor;
 
 /** Width of the ribbon gutter between the panes. */
 const CONNECTOR_WIDTH = 56;
+/** How far the split between the sides can be dragged either way. */
+const MIN_SPLIT = 0.1;
 
 interface Pane {
   editor: Editor;
@@ -42,6 +47,34 @@ export function DiffView({ view, run }: { view: View; run: Run }) {
   // The handlers below are registered once; they read the latest view here.
   const latest = useRef({ view, run });
   latest.current = { view, run };
+  const [split, setSplit] = useState(() => clampSplit(uiSettings().diffSplit ?? 0.5));
+  const [menu, setMenu] = useState<{ x: number; y: number; items: MenuEntry[] } | null>(null);
+
+  /** Drags the split; the panes relayout and the ribbons follow. */
+  const startDrag = (event: ReactPointerEvent) => {
+    if (event.button !== 0) return;
+    // A drag resizes; it must not also select text.
+    event.preventDefault();
+    const box = root.current!.getBoundingClientRect();
+    let latestSplit = split;
+    const move = (moved: PointerEvent) => {
+      latestSplit = clampSplit((moved.clientX - box.left - CONNECTOR_WIDTH / 2) / (box.width - CONNECTOR_WIDTH));
+      setSplit(latestSplit);
+    };
+    const stop = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+      document.body.classList.remove("col-resizing");
+      updateUiSettings({ diffSplit: Math.round(latestSplit * 1000) / 1000 });
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+    document.body.classList.add("col-resizing");
+  };
+  const resetSplit = () => {
+    setSplit(0.5);
+    updateUiSettings({ diffSplit: 0.5 });
+  };
 
   useEffect(() => {
     const create = (host: HTMLDivElement): Pane => {
@@ -55,7 +88,8 @@ export function DiffView({ view, run }: { view: View; run: Run }) {
         glyphMargin: true,
         folding: false,
         minimap: { enabled: false },
-        scrollBeyondLastLine: false,
+        // The shared scroll ends with the last line at the top (scroll.ts).
+        scrollBeyondLastLine: true,
         renderLineHighlight: "none",
         occurrencesHighlight: "off",
         selectionHighlight: false,
@@ -103,7 +137,7 @@ export function DiffView({ view, run }: { view: View; run: Run }) {
       let dy = event.deltaY * unit;
       if (event.shiftKey && dx === 0) [dx, dy] = [dy, 0];
       if (dy !== 0) {
-        state.position = clamp(state.position + dy, 0, state.model.maxScroll(viewport()));
+        state.position = clamp(state.position + dy, 0, state.model.maxScroll());
         state.apply();
       }
       if (dx !== 0) {
@@ -158,11 +192,43 @@ export function DiffView({ view, run }: { view: View; run: Run }) {
         }
       });
 
+    // Right-click a key: ignore its changes, here or wherever the name occurs.
+    const contextMenu = (pane: Pane, side: Side) =>
+      pane.editor.onContextMenu((event) => {
+        event.event.preventDefault();
+        const line = event.target.position?.lineNumber;
+        if (line === undefined) return;
+        const { posx: x, posy: y } = event.event;
+        void keyAt(side, line).then((key) => {
+          if (!key) return;
+          const { run } = latest.current;
+          const items: MenuEntry[] = key.ignoredBy
+            ? [
+                {
+                  label: `Stop ignoring ${key.ignoredBy.label}`,
+                  action: () => run("stop_ignoring", ruleArgs(key.ignoredBy!.rule)),
+                },
+              ]
+            : [
+                {
+                  label: `Ignore changes to ${key.pointer}`,
+                  action: () => run("ignore_changes", { side, pointer: key.pointer }),
+                },
+                ...(key.key === null
+                  ? []
+                  : [{ label: `Ignore "${key.key}" everywhere`, action: () => run("ignore_changes", { key: key.key }) }]),
+              ];
+          setMenu({ x, y, items });
+        });
+      });
+
     const subscriptions = [
       follow(0),
       follow(1),
       clicks(left, "left"),
       clicks(right, "right"),
+      contextMenu(left, "left"),
+      contextMenu(right, "right"),
       // A new viewport height moves where the anchor sits.
       left.editor.onDidLayoutChange(() => state.apply()),
     ];
@@ -198,7 +264,7 @@ export function DiffView({ view, run }: { view: View; run: Run }) {
       }
     }
     // New text resets each editor's scroll; put both back.
-    state.position = clamp(state.position, 0, state.model.maxScroll(viewport));
+    state.position = clamp(state.position, 0, state.model.maxScroll());
     state.apply();
   }, [view]);
 
@@ -207,15 +273,31 @@ export function DiffView({ view, run }: { view: View; run: Run }) {
   }, [view.theme]);
 
   return (
-    <div className="diff" ref={root}>
+    <div
+      className="diff"
+      ref={root}
+      style={{ gridTemplateColumns: `minmax(0, ${split}fr) auto minmax(0, ${1 - split}fr)` }}
+    >
       <Header view={view} side="left" />
-      <div />
+      <div className="splitter" onPointerDown={startDrag} onDoubleClick={resetSplit} />
       <Header view={view} side="right" />
       <div className="diff-pane" ref={leftHost} />
-      <canvas className="connector" ref={canvas} style={{ width: CONNECTOR_WIDTH }} />
+      <canvas
+        className="connector splitter"
+        ref={canvas}
+        style={{ width: CONNECTOR_WIDTH }}
+        title="Drag to resize the sides; double-click to split evenly"
+        onPointerDown={startDrag}
+        onDoubleClick={resetSplit}
+      />
       <div className="diff-pane" ref={rightHost} />
+      {menu && <ContextMenu {...menu} onClose={() => setMenu(null)} />}
     </div>
   );
+}
+
+function clampSplit(split: number) {
+  return Number.isFinite(split) ? clamp(split, MIN_SPLIT, 1 - MIN_SPLIT) : 0.5;
 }
 
 function clamp(value: number, low: number, high: number) {

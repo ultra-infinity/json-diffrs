@@ -6,6 +6,8 @@ import { invoke } from "@tauri-apps/api/core";
 export interface UiSettings {
   explorerWidth?: number;
   assistantWidth?: number;
+  /** The original side's share of the diff's width, 0 to 1. */
+  diffSplit?: number;
   provider?: string;
   model?: string;
   customModel?: boolean;

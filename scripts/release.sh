@@ -4,7 +4,8 @@
 #
 #   nix develop -c scripts/release.sh
 #
-# The version is the one in crates/json-diff/Cargo.toml. Needs the release
+# The version is the one in crates/json-diff/Cargo.toml, and its notes are
+# its entry in CHANGELOG.md (`## <version> - <date>`). Needs the release
 # signing key (README > Releasing) at $TAURI_SIGNING_PRIVATE_KEY_PATH, by
 # default ~/.tauri/json-diff.key, and the GitHub CLI logged in. Nothing is
 # published until you confirm.
@@ -27,8 +28,16 @@ grep -q '"pubkey": ""' crates/json-diff/tauri.conf.json &&
 [[ -z $(git status --porcelain) ]] || fail "commit your changes first: releases are built from git"
 gh release view "$tag" -R "$repo" > /dev/null 2>&1 && fail "$tag is already released; bump the version"
 
+# The CHANGELOG.md entry for this version, without its heading.
+notes=$(awk -v version="$version" '
+  /^## / { if (found) exit; found = ($2 == version) ; next }
+  found
+' CHANGELOG.md | sed -e '/./,$!d')
+[[ -n $notes ]] || fail "CHANGELOG.md has no entry for $version: rename Unreleased to '## $version - $(date +%Y-%m-%d)'"
+
 rm -rf dist
 mkdir dist
+printf '%s\n' "$notes" > dist/notes.md
 nix build .#msi -o dist/msi
 cp "dist/msi/$msi" dist/
 rm dist/msi
@@ -38,7 +47,7 @@ cargo tauri signer sign --private-key-path "$key" "dist/$msi"
 cat > dist/latest.json << JSON
 {
   "version": "$version",
-  "notes": "https://github.com/$repo/releases/tag/$tag",
+  "notes": $(node -e 'process.stdout.write(JSON.stringify(require("fs").readFileSync(0, "utf8").trim()))' < dist/notes.md),
   "pub_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "platforms": {
     "windows-x86_64": {
@@ -60,5 +69,5 @@ if [[ $answer != [yY] ]]; then
 fi
 git tag -a "$tag" -m "json-diff $version"
 git push origin "$tag"
-gh release create "$tag" -R "$repo" --title "json-diff $version" --generate-notes \
+gh release create "$tag" -R "$repo" --title "json-diff $version" --notes-file dist/notes.md \
   "dist/$msi" dist/latest.json dist/SHA256SUMS

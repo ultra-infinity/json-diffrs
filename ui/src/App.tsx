@@ -4,16 +4,17 @@
 
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { getView, onView, openPaths, runCommand, type Run, type Side, type View } from "./api";
+import { getView, onView, openPaths, openRelease, releaseNotes, ruleArgs, runCommand, whatsNew, type Release, type Run, type Side, type UpdateInfo, type View } from "./api";
 import { AssistantPanel, useAssistant, type Assistant } from "./components/AssistantPanel";
 import { DiffView } from "./components/DiffView";
 import { EditView } from "./components/EditView";
 import { Explorer, pickFile, pickFolder } from "./components/Explorer";
 import { ExportDialog, ExportedBar } from "./components/ExportDialog";
 import { LicensesDialog } from "./components/LicensesDialog";
-import { MenuBar, type MenuEntry } from "./components/Menu";
+import { ContextMenu, MenuBar, type MenuEntry } from "./components/Menu";
 import { loadUiSettings, uiSettings, updateUiSettings } from "./uiSettings";
 import { UpdateBanner, useUpdates, type Updates } from "./components/UpdateBanner";
+import { WhatsNewDialog } from "./components/WhatsNewDialog";
 
 export function App() {
   const [view, setView] = useState<View | null>(null);
@@ -24,14 +25,45 @@ export function App() {
   const [exportOpen, setExportOpen] = useState(false);
   const closeExport = useCallback(() => setExportOpen(false), []);
   const [exported, setExported] = useState<{ path: string; pages: number } | null>(null);
+  const [notes, setNotes] = useState<{ title: string; releases: Release[]; actions?: ReactNode } | null>(null);
+  const closeNotes = useCallback(() => setNotes(null), []);
   const explorer = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     // Saved panel widths and model choice are needed for the first render.
     void Promise.all([getView(), loadUiSettings()]).then(([view]) => setView(view));
     const unlisten = onView(setView);
+    // Once after an update: what changed since the version that last ran.
+    void whatsNew().then((releases) => {
+      if (releases.length) setNotes({ title: `What's new in json-diff ${releases[0].version}`, releases });
+    });
     return () => void unlisten.then((stop) => stop());
   }, []);
+
+  const showAllNotes = useCallback(() => {
+    void releaseNotes().then((releases) => setNotes({ title: "What's new", releases }));
+  }, []);
+
+  // The update bar's "What's new": the coming version's notes, with its
+  // install button.
+  const showUpdateNotes = (info: UpdateInfo) =>
+    setNotes({
+        title: `What's new in json-diff ${info.version}`,
+        releases: [{ version: info.version, date: null, notes: info.notes ?? "" }],
+        actions: info.canInstall ? (
+          <button
+            className="primary"
+            onClick={() => {
+              setNotes(null);
+              updates.install();
+            }}
+          >
+            Update now
+          </button>
+        ) : (
+          <button onClick={() => void openRelease(info.releaseUrl)}>Release page</button>
+        ),
+      });
 
   const run: Run = useCallback(async (name, args = {}) => {
     try {
@@ -55,9 +87,10 @@ export function App() {
         menus={menus(view, run, updates, {
           showLicenses: () => setLicensesOpen(true),
           exportPdf: () => setExportOpen(true),
+          whatsNew: showAllNotes,
         })}
       />
-      <UpdateBanner updates={updates} />
+      <UpdateBanner updates={updates} onNotes={showUpdateNotes} />
       {exported && <ExportedBar exported={exported} onClose={() => setExported(null)} />}
       <div className="workspace">
         {view.showExplorer && (
@@ -76,6 +109,7 @@ export function App() {
       </div>
       <StatusBar view={view} assistant={assistant} />
       {licensesOpen && <LicensesDialog onClose={closeLicenses} />}
+      {notes && <WhatsNewDialog {...notes} onClose={closeNotes} />}
       {exportOpen && <ExportDialog onClose={closeExport} onView={setView} onDone={setExported} />}
     </div>
   );
@@ -85,7 +119,7 @@ function menus(
   view: View,
   run: Run,
   updates: Updates,
-  dialogs: { showLicenses: () => void; exportPdf: () => void },
+  dialogs: { showLicenses: () => void; exportPdf: () => void; whatsNew: () => void },
 ): { title: string; entries: MenuEntry[] }[] {
   const sides: Side[] = ["left", "right"];
   const title = (side: Side) => (side === "left" ? "Original" : "Modified");
@@ -150,6 +184,7 @@ function menus(
     {
       title: "Help",
       entries: [
+        { label: "What's New…", action: dialogs.whatsNew },
         { label: "Check for Updates…", action: () => updates.check(true) },
         { label: "Licenses…", action: dialogs.showLicenses },
         "separator",
@@ -215,6 +250,7 @@ function Toolbar({ view, run }: { view: View; run: Run }) {
       <button disabled={!view.foldable} title={foldTip ?? "Expand only what leads to a change"} onClick={() => run("reveal_changes")}>
         Reveal changes
       </button>
+      <IgnoredButton view={view} run={run} />
       <span className="divider" />
       <button className={`toggle${view.showExplorer ? " active" : ""}`} title="Toggle the folder explorer" onClick={() => run("set_panel_visible", { panel: "explorer" })}>
         Explorer
@@ -223,6 +259,38 @@ function Toolbar({ view, run }: { view: View; run: Run }) {
         Assistant
       </button>
     </div>
+  );
+}
+
+/** "3 ignored": the keys whose changes are ignored, each of which can be
+ *  counted again. Hidden when nothing is ignored. */
+function IgnoredButton({ view, run }: { view: View; run: Run }) {
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  if (view.ignored.length === 0) return null;
+  const items: MenuEntry[] = [
+    ...view.ignored.map(({ label, rule }) => ({
+      label: `Stop ignoring ${label}`,
+      action: () => run("stop_ignoring", ruleArgs(rule)),
+    })),
+    "separator",
+    { label: "Stop ignoring all", action: () => run("stop_ignoring", { all: true }) },
+  ];
+  const changes = view.ignoredChanges;
+  return (
+    <>
+      <span className="divider" />
+      <button
+        className="toggle active ignored-button"
+        title={`Changes to these keys are left out of the diff, the assistant's answers and PDF reports (${changes} in this comparison):\n${view.ignored.map((ignored) => ignored.label).join("\n")}`}
+        onClick={(event) => {
+          const box = event.currentTarget.getBoundingClientRect();
+          setMenu(menu ? null : { x: box.left, y: box.bottom + 2 });
+        }}
+      >
+        {view.ignored.length} ignored <span className="codicon codicon-chevron-down" />
+      </button>
+      {menu && <ContextMenu {...menu} items={items} onClose={() => setMenu(null)} />}
+    </>
   );
 }
 
@@ -241,7 +309,12 @@ function StatusBar({ view, assistant }: { view: View; assistant: Assistant }) {
         </span>
       )}
       <span className="spacer" />
-      {view.semanticChanges !== null && <span>{view.semanticChanges} semantic changes</span>}
+      {view.semanticChanges !== null && (
+        <span>
+          {view.semanticChanges} semantic changes
+          {view.ignoredChanges > 0 && ` (${view.ignoredChanges} ignored)`}
+        </span>
+      )}
       <span>
         {view.diff.hunks.length} changed blocks +{view.addedLines} −{view.removedLines}
       </span>

@@ -4,12 +4,14 @@
 pub mod folder;
 pub mod folds;
 pub mod format;
+pub mod ignore;
 pub mod structural;
 pub mod text;
 
 pub use folder::{PairEntry, PairStatus, compare_folders, scan_json_files};
 pub use folds::Folds;
 pub use format::{FoldMark, FoldOptions, FormattedJson, format_json, format_json_folded};
+pub use ignore::{IgnoreRule, is_ignored, last_key};
 pub use structural::{Change, ChangeKind, PathMap, structural_diff, structural_diff_mapped};
 pub use text::{Hunk, HunkKind, LineStatus, Segment, SideBySide};
 
@@ -59,8 +61,11 @@ impl std::fmt::Display for ParseError {
 #[derive(Debug, Clone, Default)]
 pub struct JsonDiff {
     pub view: SideBySide,
-    /// Semantic changes; `None` unless both sides parsed.
+    /// Semantic changes, without ignored ones; `None` unless both sides
+    /// parsed.
     pub changes: Option<Vec<Change>>,
+    /// Semantic changes left out because an [`IgnoreRule`] matched them.
+    pub ignored_changes: usize,
     pub left_error: Option<ParseError>,
     pub right_error: Option<ParseError>,
     /// The parsed documents, kept so folding can re-render without
@@ -74,6 +79,7 @@ struct Documents {
     right: Option<Value>,
     sort_keys: bool,
     paths: PathMap,
+    ignore: Vec<IgnoreRule>,
 }
 
 /// Compares two JSON documents given as text, fully expanded. See
@@ -92,12 +98,29 @@ pub fn diff_json_texts_folded(
     options: &DiffOptions,
     folds: &Folds,
 ) -> JsonDiff {
+    diff_json_texts_ignoring(left, right, options, folds, &[])
+}
+
+/// [`diff_json_texts_folded`], leaving out changes that `ignore` matches.
+/// In plain-text mode (not formatted, or invalid JSON) lines have no
+/// pointers, so only the structural list leaves them out.
+pub fn diff_json_texts_ignoring(
+    left: &str,
+    right: &str,
+    options: &DiffOptions,
+    folds: &Folds,
+    ignore: &[IgnoreRule],
+) -> JsonDiff {
     let (left_value, left_error) = parse(left);
     let (right_value, right_error) = parse(right);
 
+    let mut ignored_changes = 0;
     let (changes, paths) = match (&left_value, &right_value) {
         (Some(left), Some(right)) => {
-            let (changes, paths) = structural_diff_mapped(left, right);
+            let (mut changes, paths) = structural_diff_mapped(left, right);
+            let before = changes.len();
+            changes.retain(|change| !change_ignored(change, ignore, &paths));
+            ignored_changes = before - changes.len();
             (Some(changes), paths)
         }
         _ => (None, PathMap::default()),
@@ -107,6 +130,7 @@ pub fn diff_json_texts_folded(
     let mut diff = JsonDiff {
         view: SideBySide::default(),
         changes,
+        ignored_changes,
         left_error,
         right_error,
         documents: None,
@@ -117,6 +141,7 @@ pub fn diff_json_texts_folded(
             right: right_value,
             sort_keys: options.sort_keys,
             paths,
+            ignore: ignore.to_vec(),
         });
         diff.refold(folds);
     } else {
@@ -141,6 +166,17 @@ impl JsonDiff {
     /// The pointer on the other side of the node at `pointer`.
     pub fn counterpart(&self, pointer: &str, from_left: bool) -> Option<String> {
         self.documents.as_ref()?.paths.translate(pointer, from_left)
+    }
+
+    /// Whether `rule` ignores the node at `pointer` on one side; see
+    /// [`ignored_on`].
+    pub fn ignores(&self, rule: &IgnoreRule, left: bool, pointer: &str) -> bool {
+        let none = PathMap::default();
+        let paths = self
+            .documents
+            .as_ref()
+            .map_or(&none, |documents| &documents.paths);
+        ignored_on(std::slice::from_ref(rule), paths, left, pointer)
     }
 
     /// Folds that show every change: all collapsed except the containers
@@ -186,9 +222,63 @@ fn render(documents: &Documents, changes: Option<&[Change]>, folds: &Folds) -> S
         view.left_status = left_index.statuses(&left.pointers, &left.folds);
         view.right_status = right_index.statuses(&right.pointers, &right.folds);
     }
+    if !documents.ignore.is_empty() {
+        // A block that still differs in text but has nothing coloured, and
+        // involves an ignored key, is only the ignored change (plus commas
+        // around it): it is no longer a change.
+        let ignored = |left: bool, pointers: &[String], range: std::ops::Range<usize>| {
+            pointers[range]
+                .iter()
+                .any(|pointer| ignored_on(&documents.ignore, &documents.paths, left, pointer))
+        };
+        let (left_status, right_status) = (&view.left_status, &view.right_status);
+        let plain = |status: &[LineStatus], range: std::ops::Range<usize>| {
+            status[range]
+                .iter()
+                .all(|status| *status == LineStatus::Unchanged)
+        };
+        let keep: Vec<bool> = view
+            .hunks
+            .iter()
+            .map(|hunk| {
+                !(plain(left_status, hunk.left.clone())
+                    && plain(right_status, hunk.right.clone())
+                    && (ignored(true, &left.pointers, hunk.left.clone())
+                        || ignored(false, &right.pointers, hunk.right.clone())))
+            })
+            .collect();
+        view.retain_hunks(&keep);
+    }
     view.left_folds = left.folds;
     view.right_folds = right.folds;
+    view.left_pointers = left.pointers;
+    view.right_pointers = right.pointers;
     view
+}
+
+/// Whether `rules` ignore `change`, on either side.
+pub(crate) fn change_ignored(change: &Change, rules: &[IgnoreRule], paths: &PathMap) -> bool {
+    change
+        .left_path()
+        .is_some_and(|path| ignored_on(rules, paths, true, path))
+        || change
+            .right_path()
+            .is_some_and(|path| ignored_on(rules, paths, false, path))
+}
+
+/// Whether `rules` ignore the node at `pointer` on one side. A pointer rule
+/// names a node as the original document has it, so a modified-side pointer
+/// is first translated through matched array elements; one with no
+/// counterpart is compared as it is.
+fn ignored_on(rules: &[IgnoreRule], paths: &PathMap, left: bool, pointer: &str) -> bool {
+    rules.iter().any(|rule| match rule {
+        IgnoreRule::Pointer { .. } if !left => rule.matches(
+            &paths
+                .translate(pointer, false)
+                .unwrap_or_else(|| pointer.to_owned()),
+        ),
+        _ => rule.matches(pointer),
+    })
 }
 
 /// The containers on one side that hold `change`: the ancestors of its node.
@@ -526,5 +616,52 @@ mod tests {
             diff.counterpart("/list/1/x", false).as_deref(),
             Some("/list/0/x")
         );
+    }
+
+    #[test]
+    fn ignored_keys_are_no_longer_changes() {
+        let left =
+            r#"{"svc": {"port": 1, "name": "a"}, "items": [{"at": 1, "v": 1}], "legacy": "x"}"#;
+        let right = r#"{"svc": {"port": 2, "name": "b"}, "items": [{"at": 2, "v": 1}], "legacy": "x", "seen": 3}"#;
+        let options = DiffOptions::default();
+        let all = diff_json_texts(left, right, &options);
+        assert_eq!(all.changes.as_ref().map(Vec::len), Some(4));
+
+        let rules = [
+            IgnoreRule::Pointer {
+                pointer: "/svc/port".into(),
+            },
+            IgnoreRule::Key { key: "at".into() },
+            IgnoreRule::Key { key: "seen".into() },
+        ];
+        let diff = diff_json_texts_ignoring(left, right, &options, &Folds::expanded(), &rules);
+        let changes = diff.changes.unwrap();
+        assert_eq!(changes.len(), 1, "{changes:?}");
+        assert_eq!(changes[0].path, "/svc/name");
+        assert_eq!(diff.ignored_changes, 3);
+
+        // Only `name` is coloured or a change block; `"legacy": "x"` gained
+        // a comma for the ignored `seen` and stays plain.
+        let view = &diff.view;
+        assert_eq!(view.hunks.len(), 1);
+        let coloured = |left: bool| -> Vec<&str> {
+            let lines = if left { &view.left } else { &view.right };
+            lines
+                .iter()
+                .zip(view.status(left))
+                .filter(|(_, status)| **status != LineStatus::Unchanged)
+                .map(|(line, _)| line.trim())
+                .collect()
+        };
+        assert_eq!(coloured(true), [r#""name": "a""#]);
+        assert_eq!(coloured(false), [r#""name": "b""#]);
+        assert!(
+            view.segments
+                .iter()
+                .filter_map(|segment| segment.hunk)
+                .eq(0..1),
+            "segments point at the remaining hunk"
+        );
+        assert_eq!(view.pointer(false, 2), Some("/svc/port"));
     }
 }

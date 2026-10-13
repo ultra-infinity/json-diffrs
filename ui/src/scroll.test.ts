@@ -25,15 +25,23 @@ describe("AlignedScroll", () => {
   it("starts and ends both panes together", () => {
     const viewport = 5 * LINE;
     expect(scroll.scrollTops(0, viewport)).toEqual([0, 0]);
-    const [left, right] = scroll.scrollTops(scroll.maxScroll(viewport), viewport);
-    // At the end each pane shows its own last line at the bottom.
-    expect(left).toBeCloseTo(6 * LINE - (viewport - LINE));
-    expect(right).toBeCloseTo(10 * LINE - (viewport - LINE));
+    const [left, right] = scroll.scrollTops(scroll.maxScroll(), viewport);
+    // At the end each pane shows its own last line at the top.
+    expect(left).toBeCloseTo(5 * LINE);
+    expect(right).toBeCloseTo(9 * LINE);
+  });
+
+  it("brings both last lines to the bottom together on the way", () => {
+    const viewport = 5 * LINE;
+    // The shared position at which the right pane's last line is at the bottom.
+    const position = scroll.positionFor(1, 10 * LINE - viewport, viewport);
+    const [left] = scroll.scrollTops(position, viewport);
+    expect(left).toBeCloseTo(6 * LINE - viewport, 3);
   });
 
   it("finds the shared position back from either pane", () => {
     const viewport = 5 * LINE;
-    for (const position of [0, 37, 80, scroll.maxScroll(viewport)]) {
+    for (const position of [0, 37, 80, scroll.maxScroll()]) {
       const [, right] = scroll.scrollTops(position, viewport);
       expect(scroll.positionFor(1, right, viewport)).toBeCloseTo(position, 3);
     }

@@ -60,7 +60,10 @@ export function useUpdates(): Updates {
   return { phase, version, check, install, dismiss: () => setPhase({ kind: "idle" }) };
 }
 
-export function UpdateBanner({ updates }: { updates: Updates }) {
+/** Release notes in the update's manifest; older releases put a link there. */
+const hasNotes = (info: UpdateInfo) => !!info.notes?.trim() && !/^https?:\/\/\S*$/.test(info.notes.trim());
+
+export function UpdateBanner({ updates, onNotes }: { updates: Updates; onNotes: (info: UpdateInfo) => void }) {
   const { phase, dismiss } = updates;
   switch (phase.kind) {
     case "idle":
@@ -92,7 +95,10 @@ export function UpdateBanner({ updates }: { updates: Updates }) {
           <span>
             json-diff {phase.info.version} is available (you have {phase.info.currentVersion}).
           </span>
-          <button className="link" onClick={() => void openRelease(phase.info.releaseUrl)}>
+          <button
+            className="link"
+            onClick={() => (hasNotes(phase.info) ? onNotes(phase.info) : void openRelease(phase.info.releaseUrl))}
+          >
             What's new
           </button>
           {phase.info.canInstall ? (

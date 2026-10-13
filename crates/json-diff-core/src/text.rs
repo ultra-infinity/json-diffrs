@@ -72,6 +72,10 @@ pub struct SideBySide {
     pub left_folds: Vec<Option<FoldMark>>,
     /// Foldable containers on right lines.
     pub right_folds: Vec<Option<FoldMark>>,
+    /// JSON pointer of the node each left line belongs to (formatted JSON
+    /// only; empty otherwise).
+    pub left_pointers: Vec<String>,
+    pub right_pointers: Vec<String>,
 }
 
 /// The colour class of one line.
@@ -195,6 +199,8 @@ impl SideBySide {
         Self {
             left_folds: vec![None; left.len()],
             right_folds: vec![None; right.len()],
+            left_pointers: Vec::new(),
+            right_pointers: Vec::new(),
             left,
             right,
             hunks,
@@ -202,6 +208,37 @@ impl SideBySide {
             left_status,
             right_status,
         }
+    }
+
+    /// Keeps the hunks whose entry in `keep` is true. The lines of the others
+    /// stay as they are, in blocks that are no longer changes.
+    pub fn retain_hunks(&mut self, keep: &[bool]) {
+        let mut renumbered = Vec::with_capacity(self.hunks.len());
+        let mut next = 0;
+        for &kept in keep {
+            renumbered.push(kept.then(|| {
+                next += 1;
+                next - 1
+            }));
+        }
+        for segment in &mut self.segments {
+            segment.hunk = segment.hunk.and_then(|index| renumbered[index]);
+        }
+        let mut index = 0;
+        self.hunks.retain(|_| {
+            index += 1;
+            keep[index - 1]
+        });
+    }
+
+    /// The JSON pointer of a line's node, if the view is formatted JSON.
+    pub fn pointer(&self, left: bool, line: usize) -> Option<&str> {
+        let pointers = if left {
+            &self.left_pointers
+        } else {
+            &self.right_pointers
+        };
+        pointers.get(line).map(String::as_str)
     }
 
     pub fn folds(&self, left: bool) -> &[Option<FoldMark>] {

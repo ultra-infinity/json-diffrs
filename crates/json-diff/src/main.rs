@@ -8,6 +8,7 @@
 
 mod agent;
 mod agents_md;
+mod changelog;
 mod layout;
 mod licenses;
 mod pdf;
@@ -49,6 +50,9 @@ struct Core {
     settings_path: Option<PathBuf>,
     /// The settings as last written, so unchanged ones are not rewritten.
     saved: Mutex<Settings>,
+    /// Releases since the version that last ran, until the frontend shows
+    /// them.
+    news: Mutex<Vec<changelog::Release>>,
 }
 
 impl Core {
@@ -59,6 +63,7 @@ impl Core {
             applied_title: Mutex::new(String::new()),
             settings_path,
             saved: Mutex::new(saved),
+            news: Mutex::new(Vec::new()),
         }
     }
 
@@ -71,7 +76,25 @@ impl Core {
     fn remember(&self, state: &AppState, ui: Option<Value>) {
         let mut saved = self.saved.lock().unwrap_or_else(PoisonError::into_inner);
         let ui = ui.unwrap_or_else(|| saved.ui.clone());
-        let settings = Settings::of(state, ui);
+        let mut settings = Settings::of(state, ui);
+        settings.last_version.clone_from(&saved.last_version);
+        self.save(&mut saved, settings);
+    }
+
+    /// Notes the releases since the version that last ran (for the
+    /// frontend's What's New) and records `version` as the last to run.
+    fn start_version(&self, version: &str, upgraded: bool) {
+        let mut saved = self.saved.lock().unwrap_or_else(PoisonError::into_inner);
+        *self.news.lock().unwrap_or_else(PoisonError::into_inner) =
+            changelog::news(saved.last_version.as_deref(), upgraded, version);
+        let settings = Settings {
+            last_version: Some(version.to_string()),
+            ..saved.clone()
+        };
+        self.save(&mut saved, settings);
+    }
+
+    fn save(&self, saved: &mut Settings, settings: Settings) {
         if settings == *saved {
             return;
         }
@@ -218,6 +241,12 @@ fn export_pdf(
     }
 }
 
+/// The key under 1-based `line` of `side`, for the diff's right-click menu.
+#[tauri::command]
+fn key_at(core: State<Arc<Core>>, side: Side, line: usize) -> Option<view::KeyAt> {
+    view::key_at(&core.lock(), side, line)
+}
+
 /// Where the export's save dialog starts.
 #[tauri::command]
 fn pdf_suggested_path(core: State<Arc<Core>>) -> String {
@@ -358,6 +387,19 @@ fn set_ui_settings(core: State<Arc<Core>>, settings: Value) {
     core.remember(&state, Some(settings));
 }
 
+/// What changed since the version that last ran; empty after the first
+/// call, so it is shown once.
+#[tauri::command]
+fn whats_new(core: State<Arc<Core>>) -> Vec<changelog::Release> {
+    std::mem::take(&mut *core.news.lock().unwrap_or_else(PoisonError::into_inner))
+}
+
+/// Every release up to this one, newest first (Help > What's New).
+#[tauri::command]
+fn release_notes(app: AppHandle) -> Vec<changelog::Release> {
+    changelog::releases(&app.package_info().version.to_string())
+}
+
 /// Runs keychain work, which blocks, off the async runtime.
 async fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> T + Send + 'static,
@@ -369,7 +411,10 @@ async fn blocking<T: Send + 'static>(
 
 #[tauri::command]
 fn agent_prompt(agent: State<AgentHandle>, core: State<Arc<Core>>, text: String) {
-    let instructions = core.lock().agents_md.prompt_section();
+    let instructions = {
+        let state = core.lock();
+        state.agents_md.prompt_section() + &state.ignored_prompt_section()
+    };
     agent.send(AgentRequest::Prompt { text, instructions });
 }
 
@@ -445,11 +490,11 @@ fn main() {
                 .app_config_dir()
                 .ok()
                 .map(|directory| directory.join("settings.json"));
-            let settings = settings_path
-                .as_deref()
-                .and_then(Settings::load)
-                .unwrap_or_default();
+            let loaded = settings_path.as_deref().and_then(Settings::load);
+            let upgraded = loaded.is_some();
+            let settings = loaded.unwrap_or_default();
             let core = Arc::new(Core::new(initial_state(&settings), settings_path, settings));
+            core.start_version(&app.package_info().version.to_string(), upgraded);
             // Taskbars and window switchers show the window's own icon (X11 and
             // Windows read it from the window); the launcher entry and the exe
             // carry it for app menus and search.
@@ -472,6 +517,7 @@ fn main() {
             edit_text,
             export_pdf,
             pdf_suggested_path,
+            key_at,
             open_pdf,
             open_paths,
             providers,
@@ -486,6 +532,8 @@ fn main() {
             forget_key,
             ui_settings,
             set_ui_settings,
+            whats_new,
+            release_notes,
             update::check_update,
             update::install_update,
             update::open_release,

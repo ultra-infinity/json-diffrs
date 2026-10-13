@@ -300,6 +300,23 @@ fn summary(layout: &mut Layout, report: &Report, paper: Paper) {
         false,
         INK,
     );
+    if !report.ignored.is_empty() {
+        paragraph(
+            &mut flow,
+            &format!(
+                "Ignoring  {} ({} {} left out)",
+                report.ignored.join(" · "),
+                report.ignored_changes,
+                if report.ignored_changes == 1 {
+                    "change"
+                } else {
+                    "changes"
+                },
+            ),
+            false,
+            INK,
+        );
+    }
     paragraph(
         &mut flow,
         &format!("Made with {} on {}", report.producer, report.generated),
@@ -727,6 +744,8 @@ mod tests {
             title: "a.json ↔ b.json".into(),
             sources: [source.clone(), source],
             options: DiffOptions::default(),
+            ignored: Vec::new(),
+            ignored_changes: 0,
             producer: "json-diff test".into(),
             generated: "now".into(),
             changes: Changes::TextOnly,

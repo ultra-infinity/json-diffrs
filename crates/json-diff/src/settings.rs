@@ -5,7 +5,7 @@
 //! API keys are never stored here; see [`crate::secrets`].
 
 use crate::state::{AppState, Command, PanelKind, Theme};
-use json_diff_core::DiffOptions;
+use json_diff_core::{DiffOptions, IgnoreRule};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::Path;
@@ -18,8 +18,12 @@ pub struct Settings {
     pub show_explorer: bool,
     pub show_agent: bool,
     pub options: DiffOptions,
+    /// Keys whose changes are ignored, kept for every later comparison.
+    pub ignored: Vec<IgnoreRule>,
     /// Kept for the frontend: panel widths, the chosen provider and model.
     pub ui: Value,
+    /// The version that last ran, so the next one knows what's new to it.
+    pub last_version: Option<String>,
 }
 
 impl Default for Settings {
@@ -37,7 +41,9 @@ impl Settings {
             show_explorer: state.show_explorer,
             show_agent: state.show_agent,
             options: state.options,
+            ignored: state.ignored.clone(),
             ui,
+            last_version: None,
         }
     }
 
@@ -64,6 +70,8 @@ impl Settings {
         for command in commands {
             let _ = state.apply(command);
         }
+        state.ignored.clone_from(&self.ignored);
+        state.recompute(false);
         state.status = None;
     }
 
@@ -110,6 +118,13 @@ mod tests {
             })
             .unwrap();
         state.apply(Command::SetZoom { zoom: 1.5 }).unwrap();
+        state
+            .apply(Command::IgnoreChanges {
+                side: crate::state::Side::Left,
+                pointer: None,
+                key: Some("updatedAt".into()),
+            })
+            .unwrap();
         let settings = Settings::of(&state, json!({ "provider": "openai" }));
         settings.save(&path).unwrap();
         assert_eq!(Settings::load(&path), Some(settings.clone()));
@@ -118,6 +133,7 @@ mod tests {
         settings.apply_to(&mut restored);
         assert_eq!(restored.theme, Theme::Light);
         assert_eq!(restored.zoom, 1.5);
+        assert_eq!(restored.ignored, state.ignored);
         assert!(restored.status.is_none(), "restoring is silent");
     }
 

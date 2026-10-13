@@ -1,5 +1,6 @@
 //! Folder scanning and pairing of JSON files across two folders.
 
+use crate::{IgnoreRule, change_ignored, structural_diff_mapped};
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::io;
@@ -62,13 +63,15 @@ pub struct PairEntry {
 }
 
 /// Pairs files with the same relative path and compares their contents
-/// semantically (key order and whitespace are ignored). Files that fail to
-/// parse are compared byte for byte.
+/// semantically (key order and whitespace are ignored, and so are changes
+/// that `ignore` matches). Files that fail to parse are compared byte for
+/// byte.
 pub fn compare_folders(
     left_root: &Path,
     left_files: &[PathBuf],
     right_root: &Path,
     right_files: &[PathBuf],
+    ignore: &[IgnoreRule],
 ) -> Vec<PairEntry> {
     let mut sides: BTreeMap<&Path, (bool, bool)> = BTreeMap::new();
     for path in left_files {
@@ -84,7 +87,7 @@ pub fn compare_folders(
             let status = match sides {
                 (true, false) => PairStatus::OnlyLeft,
                 (false, true) => PairStatus::OnlyRight,
-                _ if same_content(&left_root.join(path), &right_root.join(path)) => {
+                _ if same_content(&left_root.join(path), &right_root.join(path), ignore) => {
                     PairStatus::Identical
                 }
                 _ => PairStatus::Modified,
@@ -97,7 +100,7 @@ pub fn compare_folders(
         .collect()
 }
 
-fn same_content(left: &Path, right: &Path) -> bool {
+fn same_content(left: &Path, right: &Path, ignore: &[IgnoreRule]) -> bool {
     let (Ok(left), Ok(right)) = (std::fs::read(left), std::fs::read(right)) else {
         return false;
     };
@@ -108,7 +111,14 @@ fn same_content(left: &Path, right: &Path) -> bool {
         serde_json::from_slice::<serde_json::Value>(&left),
         serde_json::from_slice::<serde_json::Value>(&right),
     ) {
-        (Ok(left), Ok(right)) => left == right,
+        (Ok(left), Ok(right)) if left == right => true,
+        (Ok(_), Ok(_)) if ignore.is_empty() => false,
+        (Ok(left), Ok(right)) => {
+            let (changes, paths) = structural_diff_mapped(&left, &right);
+            changes
+                .iter()
+                .all(|change| change_ignored(change, ignore, &paths))
+        }
         _ => false,
     }
 }
@@ -116,6 +126,25 @@ fn same_content(left: &Path, right: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn files_differing_only_in_ignored_keys_are_identical() {
+        let root = tempfile::tempdir().unwrap();
+        let (left, right) = (root.path().join("left"), root.path().join("right"));
+        std::fs::create_dir_all(&left).unwrap();
+        std::fs::create_dir_all(&right).unwrap();
+        std::fs::write(left.join("a.json"), r#"{"v": 1, "at": "mon"}"#).unwrap();
+        std::fs::write(right.join("a.json"), r#"{"v": 1, "at": "tue"}"#).unwrap();
+        let files = vec![PathBuf::from("a.json")];
+        let status = |ignore: &[IgnoreRule]| {
+            compare_folders(&left, &files, &right, &files, ignore)[0].status
+        };
+        assert_eq!(status(&[]), PairStatus::Modified);
+        assert_eq!(
+            status(&[IgnoreRule::Key { key: "at".into() }]),
+            PairStatus::Identical
+        );
+    }
 
     #[test]
     fn pairs_and_compares_folders() {
@@ -133,7 +162,7 @@ mod tests {
 
         let left_files = scan_json_files(&left).unwrap();
         let right_files = scan_json_files(&right).unwrap();
-        let entries = compare_folders(&left, &left_files, &right, &right_files);
+        let entries = compare_folders(&left, &left_files, &right, &right_files, &[]);
 
         let summary: Vec<_> = entries
             .iter()

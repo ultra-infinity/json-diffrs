@@ -6,7 +6,9 @@
 // bottom (scrolled to the end); each pane is placed so that the line it shows
 // at the anchor's aligned row sits at the anchor. Both documents therefore
 // start and end together and only drift apart around blocks of different
-// height, which is what bends the ribbons between them.
+// height, which is what bends the ribbons between them. As in VS Code, the
+// end is past the last line: scrolled all the way, both last lines are at
+// the top, so the end of a long document can be read away from the edge.
 
 /** `[left start, left end, right start, right end]`, 0-based, ends exclusive. */
 export type Segment = [number, number, number, number];
@@ -30,9 +32,10 @@ export class AlignedScroll {
     this.rows = row;
   }
 
-  /** The furthest the shared position can go, for a viewport `viewport` px tall. */
-  maxScroll(viewport: number) {
-    return Math.max(0, this.rows * this.lineHeight - viewport + this.lineHeight);
+  /** The furthest the shared position can go: where both last lines reach
+   *  the top. Panes need Monaco's `scrollBeyondLastLine` to get there. */
+  maxScroll() {
+    return Math.max(0, (this.rows - 1) * this.lineHeight);
   }
 
   /** The (fractional, 0-based) line each side shows at aligned row `row`.
@@ -60,7 +63,7 @@ export class AlignedScroll {
 
   /** Each pane's scrollTop for shared position `position`. */
   scrollTops(position: number, viewport: number): [number, number] {
-    const max = this.maxScroll(viewport);
+    const max = this.maxScroll();
     const fraction = max > 0 ? position / max : 0;
     const anchor = fraction * Math.max(0, viewport - this.lineHeight);
     const [left, right] = this.lineAt((position + anchor) / this.lineHeight);
@@ -72,7 +75,7 @@ export class AlignedScroll {
    *  scrollbar). */
   positionFor(side: 0 | 1, scrollTop: number, viewport: number) {
     let low = 0;
-    let high = this.maxScroll(viewport);
+    let high = this.maxScroll();
     for (let step = 0; step < 40; step++) {
       const middle = (low + high) / 2;
       if (this.scrollTops(middle, viewport)[side] < scrollTop) low = middle;

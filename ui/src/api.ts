@@ -27,10 +27,38 @@ export interface View {
   agentsMd: AgentsMdView[];
   foldable: boolean;
   semanticChanges: number | null;
+  /** Keys whose changes are ignored (right-click a key in the diff). */
+  ignored: IgnoredView[];
+  /** Semantic changes left out because their key is ignored. */
+  ignoredChanges: number;
   addedLines: number;
   removedLines: number;
   title: string;
 }
+
+/** A pointer rule names a node as the original document has it. */
+export type IgnoreRule = { kind: "pointer"; pointer: string } | { kind: "key"; key: string };
+
+export interface IgnoredView {
+  /** `/a/b` or `"name" everywhere`. */
+  label: string;
+  rule: IgnoreRule;
+}
+
+/** The key under a line of the diff. */
+export interface KeyAt {
+  pointer: string;
+  /** `null` for an array element. */
+  key: string | null;
+  ignoredBy: IgnoredView | null;
+}
+
+/** `line` is 1-based; `null` for the document's own brackets or plain text. */
+export const keyAt = (side: Side, line: number) => invoke<KeyAt | null>("key_at", { side, line });
+
+/** The `stop_ignoring` arguments that name `rule`. */
+export const ruleArgs = (rule: IgnoreRule) =>
+  rule.kind === "pointer" ? { pointer: rule.pointer } : { key: rule.key };
 
 export interface FolderView {
   root: string;
@@ -180,6 +208,19 @@ export const onUpdateProgress = (
 
 /** json-diff's license and those of every bundled library. */
 export const licenses = () => invoke<string>("licenses");
+
+/** One release's entry in CHANGELOG.md. */
+export interface Release {
+  version: string;
+  date: string | null;
+  /** Markdown: `-` bullets with **bold** and `code`. */
+  notes: string;
+}
+
+/** The releases since the version that last ran; empty after the first call. */
+export const whatsNew = () => invoke<Release[]>("whats_new");
+/** Every release up to this one, newest first. */
+export const releaseNotes = () => invoke<Release[]>("release_notes");
 
 export type Paper = "letter" | "a4";
 

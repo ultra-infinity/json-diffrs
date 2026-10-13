@@ -1,6 +1,6 @@
 [package]
 name = "json-diff"
-version = "0.4.1"
+version = "0.5.0"
 edition = "2024"
 description = "Side-by-side JSON diff with folder comparison and an AI assistant"
 authors.workspace = true
@@ -15,6 +15,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 serde = { version = "1.0.0", features = ["derive"] }
 serde_json = "1.0.0"
+semver = "1"
 json-diff-core = { path = "../json-diff-core" }
 rig = "0.44"
 schemars = "1"
