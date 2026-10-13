@@ -5,8 +5,14 @@
   "build": {
     "devUrl": "http://localhost:1420",
     "frontendDist": "../../ui/dist",
-    "beforeDevCommand": { "script": "npm run dev", "cwd": "../../ui" },
-    "beforeBuildCommand": { "script": "npm run build", "cwd": "../../ui" }
+    "beforeDevCommand": {
+      "script": "npm run dev",
+      "cwd": "../../ui"
+    },
+    "beforeBuildCommand": {
+      "script": "npm run build",
+      "cwd": "../../ui"
+    }
   },
   "app": {
     "windows": [
@@ -34,5 +40,16 @@
       "icons/icon.png",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "",
+      "endpoints": [
+        "https://github.com/ultra-infinity/json-diffrs/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

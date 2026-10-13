@@ -10,10 +10,12 @@ import { DiffView } from "./components/DiffView";
 import { EditView } from "./components/EditView";
 import { Explorer, pickFile, pickFolder } from "./components/Explorer";
 import { MenuBar, type MenuEntry } from "./components/Menu";
+import { UpdateBanner, useUpdates, type Updates } from "./components/UpdateBanner";
 
 export function App() {
   const [view, setView] = useState<View | null>(null);
   const assistant = useAssistant();
+  const updates = useUpdates();
   const explorer = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -40,7 +42,8 @@ export function App() {
   if (!view) return null;
   return (
     <div className="app">
-      <MenuBar menus={menus(view, run)} />
+      <MenuBar menus={menus(view, run, updates)} />
+      <UpdateBanner updates={updates} />
       <div className="workspace">
         {view.showExplorer && (
           <Resizable side="left" initial={260} min={160} max={600}>
@@ -61,7 +64,7 @@ export function App() {
   );
 }
 
-function menus(view: View, run: Run): { title: string; entries: MenuEntry[] }[] {
+function menus(view: View, run: Run, updates: Updates): { title: string; entries: MenuEntry[] }[] {
   const sides: Side[] = ["left", "right"];
   const title = (side: Side) => (side === "left" ? "Original" : "Modified");
   const option = (key: keyof View["options"]) => () => run("set_options", { [key]: !view.options[key] });
@@ -118,6 +121,14 @@ function menus(view: View, run: Run): { title: string; entries: MenuEntry[] }[] 
           disabled: view.options.format,
           action: option("ignore_whitespace"),
         },
+      ],
+    },
+    {
+      title: "Help",
+      entries: [
+        { label: "Check for Updates…", action: () => updates.check(true) },
+        "separator",
+        { label: `json-diff ${updates.version}`, disabled: true, action: () => {} },
       ],
     },
   ];

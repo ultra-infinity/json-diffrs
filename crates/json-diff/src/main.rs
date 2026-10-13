@@ -11,6 +11,7 @@ mod agents_md;
 mod samples;
 mod state;
 mod tools;
+mod update;
 mod view;
 
 use agent::{AgentEvent, AgentHandle, AgentRequest, Host, ModelChoice};
@@ -262,6 +263,9 @@ fn main() {
     let core = Arc::new(Core::new(initial_state()));
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(update::PendingUpdate::default())
         .setup(move |app| {
             let host = TauriHost {
                 core: core.clone(),
@@ -284,6 +288,10 @@ fn main() {
             agent_prompt,
             agent_reset,
             agent_cancel,
+            update::check_update,
+            update::install_update,
+            update::open_release,
+            update::app_version,
         ])
         .run(tauri::generate_context!())
         .expect("failed to start json-diff");

@@ -41,6 +41,14 @@ json-diff draws its window with Microsoft Edge WebView2, which comes with Window
 and is kept up to date on Windows 10. If json-diff says it "could not find the WebView2
 Runtime", install it from [Microsoft](https://developer.microsoft.com/microsoft-edge/webview2/).
 
+json-diff checks for a new version when it starts, and **Help → Check for Updates…**
+checks on demand. When there is one, a bar at the top offers **Update now**: the new
+installer is downloaded, its signature checked, and installed in place. Open json-diff
+again once the installer finishes.
+
+On Linux the same bar tells you about new versions; update with your package manager,
+for example `nix profile upgrade json-diff`.
+
 ### NixOS and Nix
 
 Run it without installing:
@@ -174,6 +182,35 @@ With Nix:
 | `nix build .#windows` | `json-diff.exe` and `WebView2Loader.dll`, cross-compiled from Linux |
 | `nix build .#msi` | The Windows installer ([`main.wxs`](crates/json-diff/wix/main.wxs)) |
 | `nix flake check` | The package, clippy, Rust and frontend tests, and formatting |
+
+## Releasing
+
+Every release is signed, so the in-app updater only installs builds that came from
+you. The key is made once and used for every release after that.
+
+**Once:** create the key and give the app its public half.
+
+```sh
+nix develop -c cargo tauri signer generate -w ~/.tauri/json-diff.key
+```
+
+Choose a password when asked. Then copy the public key it prints (it is also in
+`~/.tauri/json-diff.key.pub`) into `plugins.updater.pubkey` in
+[`tauri.conf.json`](crates/json-diff/tauri.conf.json) and commit that. Until then, the
+app does not check for updates.
+
+Keep `~/.tauri/json-diff.key` and its password safe and out of git. Without them you
+cannot publish updates that installed copies will accept.
+
+**Each release:** raise `version` in [`crates/json-diff/Cargo.toml`](crates/json-diff/Cargo.toml)
+(and `ui/package.json`), commit, then run:
+
+```sh
+nix develop -c scripts/release.sh
+```
+
+It builds and signs the installer, writes the `latest.json` the updater reads, and
+asks before tagging the version and publishing the GitHub release.
 
 ## License
 

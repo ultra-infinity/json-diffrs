@@ -150,3 +150,25 @@ export const onAgent = (handler: (event: AgentEvent) => void): Promise<UnlistenF
 
 /** Runs a command, used by every button: returns the new view. */
 export type Run = (name: string, args?: Record<string, unknown>) => Promise<void>;
+
+export interface UpdateInfo {
+  version: string;
+  currentVersion: string;
+  notes: string | null;
+  /** This build installs updates itself (Windows). */
+  canInstall: boolean;
+  releaseUrl: string;
+}
+
+/** The newest release if it is newer than this build, else null. Fails when
+ *  updates are not set up (no signing key) or offline. */
+export const checkUpdate = () => invoke<UpdateInfo | null>("check_update");
+/** Downloads, verifies and installs the update; the app then closes. */
+export const installUpdate = () => invoke<void>("install_update");
+export const openRelease = (url: string) => invoke<void>("open_release", { url });
+export const appVersion = () => invoke<string>("app_version");
+
+export const onUpdateProgress = (
+  handler: (progress: { downloaded: number; total: number | null }) => void,
+): Promise<UnlistenFn> =>
+  listen<{ downloaded: number; total: number | null }>("update-progress", (event) => handler(event.payload));
