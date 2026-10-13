@@ -57,6 +57,8 @@ export interface DiffView {
   left: SideView;
   right: SideView;
   hunks: HunkView[];
+  /** Aligned blocks: `[left start, left end, right start, right end]`. */
+  segments: [number, number, number, number][];
 }
 
 export interface SideView {
@@ -65,7 +67,6 @@ export interface SideView {
   status: string;
   folds: FoldView[];
   inline: InlineView[];
-  padding: PaddingView[];
 }
 
 export interface FoldView {
@@ -83,12 +84,6 @@ export interface InlineView {
   line: number;
   start: number;
   end: number;
-}
-
-export interface PaddingView {
-  /** The gap follows this 1-based line; 0 is above the first. */
-  afterLine: number;
-  lines: number;
 }
 
 export interface HunkView {

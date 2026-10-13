@@ -1,29 +1,44 @@
 // The side-by-side diff: two read-only Monaco editors showing what the Rust
 // structural diff decided. Rust supplies each line's colour, the changed
-// characters, the fold markers and the blank gaps that keep both sides
-// aligned; this file only draws them, keeps the scroll positions in step,
-// and paints the ribbons between the panes.
+// characters and the fold markers; this file draws them, scrolls both panes
+// together without filler lines (see `scroll.ts`), and paints the ribbons that
+// join each change to where it belongs on the other side. An insertion's
+// ribbon narrows to the line on the left where the new lines go.
 
 import { useEffect, useRef } from "react";
 import type { HunkView, LineStatus, Run, Side, SideView, View } from "../api";
 import { FONT_FAMILY, FONT_SIZE, LINE_HEIGHT, monaco, monacoTheme } from "../monaco";
+import { AlignedScroll } from "../scroll";
 
 type Editor = monaco.editor.IStandaloneCodeEditor;
 
 /** Width of the ribbon gutter between the panes. */
-const CONNECTOR_WIDTH = 48;
+const CONNECTOR_WIDTH = 56;
 
 interface Pane {
   editor: Editor;
   decorations: monaco.editor.IEditorDecorationsCollection;
-  zones: string[];
+}
+
+/** The shared scroll position, in aligned-space pixels, and its model. */
+interface Scroll {
+  position: number;
+  model: AlignedScroll;
+  /** Moves both panes to `position`, except the one that just scrolled. */
+  apply: (skip?: 0 | 1) => void;
 }
 
 export function DiffView({ view, run }: { view: View; run: Run }) {
+  const root = useRef<HTMLDivElement>(null);
   const leftHost = useRef<HTMLDivElement>(null);
   const rightHost = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const panes = useRef<[Pane, Pane] | null>(null);
+  const scroll = useRef<Scroll>({
+    position: 0,
+    model: new AlignedScroll(view.diff.segments, LINE_HEIGHT),
+    apply: () => {},
+  });
   // The handlers below are registered once; they read the latest view here.
   const latest = useRef({ view, run });
   latest.current = { view, run };
@@ -53,26 +68,67 @@ export function DiffView({ view, run }: { view: View; run: Run }) {
         fontFamily: FONT_FAMILY,
         fontSize: FONT_SIZE,
         lineHeight: LINE_HEIGHT,
-        scrollbar: { useShadows: false, alwaysConsumeMouseWheel: false },
+        // The wheel moves the shared position instead (below).
+        scrollbar: { useShadows: false, handleMouseWheel: false, alwaysConsumeMouseWheel: false },
         stickyScroll: { enabled: false },
         guides: { indentation: false },
       });
-      return { editor, decorations: editor.createDecorationsCollection(), zones: [] };
+      return { editor, decorations: editor.createDecorationsCollection() };
     };
     const left = create(leftHost.current!);
     const right = create(rightHost.current!);
+    const editors = [left.editor, right.editor] as const;
     panes.current = [left, right];
+    const state = scroll.current;
+    const viewport = () => left.editor.getLayoutInfo().height;
 
-    // Both sides are padded to the same height, so their scroll positions
-    // can simply be copied.
-    let syncing = false;
-    const follow = (from: Editor, to: Editor) =>
-      from.onDidScrollChange((event) => {
-        if (!syncing && (event.scrollTopChanged || event.scrollLeftChanged)) {
-          syncing = true;
-          to.setScrollTop(event.scrollTop);
-          to.setScrollLeft(event.scrollLeft);
-          syncing = false;
+    const drawRibbons = () => {
+      if (canvas.current && panes.current) paintRibbons(canvas.current, panes.current, latest.current.view);
+    };
+
+    let applying = false;
+    state.apply = (skip) => {
+      const tops = state.model.scrollTops(state.position, viewport());
+      applying = true;
+      editors.forEach((editor, index) => index !== skip && editor.setScrollTop(tops[index]));
+      applying = false;
+      drawRibbons();
+    };
+
+    // Wheel and trackpad, anywhere over the diff; Shift scrolls sideways.
+    const wheel = (event: WheelEvent) => {
+      event.preventDefault();
+      const unit = event.deltaMode === 1 ? LINE_HEIGHT : event.deltaMode === 2 ? viewport() : 1;
+      let dx = event.deltaX * unit;
+      let dy = event.deltaY * unit;
+      if (event.shiftKey && dx === 0) [dx, dy] = [dy, 0];
+      if (dy !== 0) {
+        state.position = clamp(state.position + dy, 0, state.model.maxScroll(viewport()));
+        state.apply();
+      }
+      if (dx !== 0) {
+        const x = left.editor.getScrollLeft() + dx;
+        applying = true;
+        editors.forEach((editor) => editor.setScrollLeft(x));
+        applying = false;
+      }
+    };
+    const element = root.current!;
+    element.addEventListener("wheel", wheel, { passive: false });
+
+    // A pane that scrolled itself (arrow keys, Page Up/Down, its scrollbar)
+    // moves the shared position, and the other pane follows.
+    const follow = (index: 0 | 1) =>
+      editors[index].onDidScrollChange((event) => {
+        if (applying) return;
+        if (event.scrollTopChanged) {
+          state.position = state.model.positionFor(index, event.scrollTop, viewport());
+          state.apply(index);
+        }
+        if (event.scrollLeftChanged) {
+          applying = true;
+          editors[1 - index].setScrollLeft(event.scrollLeft);
+          applying = false;
         }
         drawRibbons();
       });
@@ -102,58 +158,48 @@ export function DiffView({ view, run }: { view: View; run: Run }) {
         }
       });
 
-    const drawRibbons = () => {
-      const element = canvas.current;
-      if (!element || !panes.current) return;
-      paintRibbons(element, panes.current, latest.current.view);
-    };
-
     const subscriptions = [
-      follow(left.editor, right.editor),
-      follow(right.editor, left.editor),
+      follow(0),
+      follow(1),
       clicks(left, "left"),
       clicks(right, "right"),
-      left.editor.onDidLayoutChange(drawRibbons),
-      left.editor.onDidContentSizeChange(drawRibbons),
+      // A new viewport height moves where the anchor sits.
+      left.editor.onDidLayoutChange(() => state.apply()),
     ];
     const resize = new ResizeObserver(drawRibbons);
     resize.observe(canvas.current!);
 
     return () => {
+      element.removeEventListener("wheel", wheel);
       resize.disconnect();
       subscriptions.forEach((subscription) => subscription.dispose());
       left.editor.dispose();
       right.editor.dispose();
       panes.current = null;
+      state.apply = () => {};
     };
   }, []);
 
   useEffect(() => {
     if (!panes.current) return;
     const [left, right] = panes.current;
-    const scrollTop = left.editor.getScrollTop();
-    const scrollLeft = left.editor.getScrollLeft();
+    const state = scroll.current;
+    state.model = new AlignedScroll(view.diff.segments, LINE_HEIGHT);
     const current = view.currentHunk === null ? undefined : view.diff.hunks[view.currentHunk];
     render(left, view.diff.left, current?.left);
     render(right, view.diff.right, current?.right);
-    left.editor.setScrollTop(scrollTop);
-    left.editor.setScrollLeft(scrollLeft);
-    right.editor.setScrollTop(scrollTop);
-    right.editor.setScrollLeft(scrollLeft);
 
+    const viewport = left.editor.getLayoutInfo().height;
     if (view.reveal !== null) {
       const hunk = view.diff.hunks[view.reveal];
-      if (hunk) {
-        // Reveal on the side that has lines; scrolling follows on the other.
-        const [pane, [start, end]] =
-          hunk.right[1] > hunk.right[0] ? [right, hunk.right] : [left, hunk.left];
-        const first = Math.max(1, start + 1);
-        pane.editor.revealRangeInCenterIfOutsideViewport(
-          new monaco.Range(first, 1, Math.max(first, end), 1),
-        );
+      if (hunk && !isVisible(hunk, [left, right], viewport)) {
+        const row = state.model.rowOf(hunk.left[0], hunk.right[0]);
+        if (row !== null) state.position = row * LINE_HEIGHT - viewport / 3;
       }
     }
-    paintRibbons(canvas.current!, panes.current, view);
+    // New text resets each editor's scroll; put both back.
+    state.position = clamp(state.position, 0, state.model.maxScroll(viewport));
+    state.apply();
   }, [view]);
 
   useEffect(() => {
@@ -161,7 +207,7 @@ export function DiffView({ view, run }: { view: View; run: Run }) {
   }, [view.theme]);
 
   return (
-    <div className="diff">
+    <div className="diff" ref={root}>
       <Header view={view} side="left" />
       <div />
       <Header view={view} side="right" />
@@ -170,6 +216,18 @@ export function DiffView({ view, run }: { view: View; run: Run }) {
       <div className="diff-pane" ref={rightHost} />
     </div>
   );
+}
+
+function clamp(value: number, low: number, high: number) {
+  return Math.min(high, Math.max(low, value));
+}
+
+/** Whether a change already sits fully inside both panes. */
+function isVisible(hunk: HunkView, [left, right]: [Pane, Pane], viewport: number) {
+  return [
+    span(left.editor, hunk.left),
+    span(right.editor, hunk.right),
+  ].every(([top, bottom]) => top >= 0 && bottom <= viewport);
 }
 
 function Header({ view, side }: { view: View; side: Side }) {
@@ -193,23 +251,10 @@ function Header({ view, side }: { view: View; side: Side }) {
   );
 }
 
-/** Puts one side's text, gaps and decorations into its editor. */
+/** Puts one side's text and decorations into its editor. */
 function render(pane: Pane, side: SideView, current: [number, number] | undefined) {
   const { editor } = pane;
   if (editor.getValue() !== side.text) editor.setValue(side.text);
-
-  editor.changeViewZones((accessor) => {
-    pane.zones.forEach((id) => accessor.removeZone(id));
-    pane.zones = side.padding.map((gap) => {
-      const domNode = document.createElement("div");
-      domNode.className = "diff-gap";
-      return accessor.addZone({
-        afterLineNumber: gap.afterLine,
-        heightInLines: gap.lines,
-        domNode,
-      });
-    });
-  });
 
   const decorations: monaco.editor.IModelDeltaDecoration[] = [];
   const status = side.status;
@@ -283,7 +328,18 @@ const COLORS: Record<Exclude<LineStatus, "unchanged">, [string, string]> = {
 };
 const NEUTRAL: [string, string] = ["rgba(128, 128, 128, 0.12)", "rgba(128, 128, 128, 0.5)"];
 
-/** The ribbons joining each change's two sides across the gutter. */
+/** A side of a ribbon takes its own colour, or the other side's when it has
+ *  none (an insertion point); a change of formatting only is neutral. */
+function ribbonColor(hunk: HunkView, left: boolean): [string, string] {
+  const own = left ? hunk.leftStatus : hunk.rightStatus;
+  const other = left ? hunk.rightStatus : hunk.leftStatus;
+  const status = own !== "unchanged" ? own : other;
+  return status === "unchanged" ? NEUTRAL : COLORS[status];
+}
+
+/** The ribbons joining each change's two sides across the gutter. A side
+ *  with no lines (an insertion point) narrows to the line boundary where
+ *  the change belongs. */
 function paintRibbons(element: HTMLCanvasElement, [left, right]: [Pane, Pane], view: View) {
   const ratio = window.devicePixelRatio || 1;
   const width = element.clientWidth;
@@ -298,8 +354,8 @@ function paintRibbons(element: HTMLCanvasElement, [left, right]: [Pane, Pane], v
   context.clearRect(0, 0, width, height);
 
   view.diff.hunks.forEach((hunk, index) => {
-    const [ly0, ly1] = span(left.editor, hunk.left, view.diff.left);
-    const [ry0, ry1] = span(right.editor, hunk.right, view.diff.right);
+    const [ly0, ly1] = span(left.editor, hunk.left);
+    const [ry0, ry1] = span(right.editor, hunk.right);
     if (Math.max(ly1, ry1) < 0 || Math.min(ly0, ry0) > height) return;
     const [leftFill, leftEdge] = ribbonColor(hunk, true);
     const [rightFill, rightEdge] = ribbonColor(hunk, false);
@@ -331,26 +387,9 @@ function paintRibbons(element: HTMLCanvasElement, [left, right]: [Pane, Pane], v
   });
 }
 
-/** A side of a ribbon takes its own colour, or the other side's when it has
- *  none (an insertion point); a change of formatting only is neutral. */
-function ribbonColor(hunk: HunkView, left: boolean): [string, string] {
-  const own = left ? hunk.leftStatus : hunk.rightStatus;
-  const other = left ? hunk.rightStatus : hunk.leftStatus;
-  const status = own !== "unchanged" ? own : other;
-  return status === "unchanged" ? NEUTRAL : COLORS[status];
-}
-
-/** Top and bottom, in editor-viewport pixels, of a 0-based line range plus
- *  the gap that pads it. An empty range is the gap alone. */
-function span(editor: Editor, [start, end]: [number, number], side: SideView): [number, number] {
+/** Top and bottom, in viewport pixels, of a 0-based line range; an empty
+ *  range is the boundary above its start line. */
+function span(editor: Editor, [start, end]: [number, number]): [number, number] {
   const scroll = editor.getScrollTop();
-  const gap = side.padding.find((padding) => padding.afterLine === end)?.lines ?? 0;
-  const top =
-    end > start
-      ? editor.getTopForLineNumber(start + 1)
-      : start === 0
-        ? 0
-        : editor.getTopForLineNumber(start) + LINE_HEIGHT;
-  const bottom = (end > start ? editor.getTopForLineNumber(end) + LINE_HEIGHT : top) + gap * LINE_HEIGHT;
-  return [top - scroll, bottom - scroll];
+  return [start * LINE_HEIGHT - scroll, end * LINE_HEIGHT - scroll];
 }

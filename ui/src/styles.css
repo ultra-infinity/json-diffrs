@@ -569,10 +569,6 @@ button.toggle.active {
   font-size: 11px;
 }
 
-.diff-gap {
-  background: repeating-linear-gradient(-45deg, transparent 0 6px, var(--gap-stripe) 6px 7px);
-}
-
 /* Edit mode */
 
 .edit {

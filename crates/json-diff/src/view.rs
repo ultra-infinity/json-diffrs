@@ -83,6 +83,11 @@ pub struct DiffView {
     pub left: SideView,
     pub right: SideView,
     pub hunks: Vec<HunkView>,
+    /// Both documents cut into aligned blocks, in order: each is a run of
+    /// unchanged lines or one change, as `[left start, left end, right start,
+    /// right end]` (0-based, ends exclusive). The panes scroll through these
+    /// together (see `ui/src/scroll.ts`).
+    pub segments: Vec<[usize; 4]>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -94,7 +99,6 @@ pub struct SideView {
     pub status: String,
     pub folds: Vec<FoldView>,
     pub inline: Vec<InlineView>,
-    pub padding: Vec<PaddingView>,
 }
 
 /// A foldable container's first line.
@@ -119,15 +123,6 @@ pub struct InlineView {
     /// 1-based UTF-16 columns, end exclusive.
     pub start: usize,
     pub end: usize,
-}
-
-/// Blank lines inserted so both sides stay aligned, like VS Code's diff.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PaddingView {
-    /// The gap follows this 1-based line; 0 puts it above the first line.
-    pub after_line: usize,
-    pub lines: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -218,6 +213,18 @@ pub fn snapshot(state: &mut AppState) -> View {
                     }
                 })
                 .collect(),
+            segments: view
+                .segments
+                .iter()
+                .map(|segment| {
+                    [
+                        segment.left.start,
+                        segment.left.end,
+                        segment.right.start,
+                        segment.right.end,
+                    ]
+                })
+                .collect(),
         },
         current_hunk: state.current_hunk,
         reveal,
@@ -285,30 +292,11 @@ fn side_view(view: &SideBySide, left: bool) -> SideView {
         }
     }
 
-    // In each changed segment the shorter side gets the difference as a gap
-    // after its last line.
-    let padding = view
-        .segments
-        .iter()
-        .filter_map(|segment| {
-            let (own, other) = if left {
-                (&segment.left, &segment.right)
-            } else {
-                (&segment.right, &segment.left)
-            };
-            (other.len() > own.len()).then(|| PaddingView {
-                after_line: own.end,
-                lines: other.len() - own.len(),
-            })
-        })
-        .collect();
-
     SideView {
         text: lines.join("\n"),
         status,
         folds,
         inline,
-        padding,
     }
 }
 
@@ -394,20 +382,28 @@ mod tests {
     }
 
     #[test]
-    fn sides_line_up_after_padding() {
+    fn segments_cover_both_documents_in_order() {
         let mut state = sample();
         state.apply(Command::RevealChanges).unwrap();
         let view = snapshot(&mut state);
-        let rows = |side: &SideView| {
-            side.status.len() + side.padding.iter().map(|gap| gap.lines).sum::<usize>()
-        };
-        assert_eq!(rows(&view.diff.left), rows(&view.diff.right));
+        let (mut left, mut right) = (0, 0);
+        for [left_start, left_end, right_start, right_end] in &view.diff.segments {
+            assert_eq!((*left_start, *right_start), (left, right), "no gaps");
+            (left, right) = (*left_end, *right_end);
+        }
+        assert_eq!(left, view.diff.left.status.len());
+        assert_eq!(right, view.diff.right.status.len());
         assert_eq!(
             view.diff.left.status.len(),
             view.diff.left.text.lines().count()
         );
-        // The inserted endpoint leaves a gap on the original side.
-        assert!(!view.diff.left.padding.is_empty());
+        // The inserted endpoint is a block with no lines on the original side.
+        assert!(
+            view.diff
+                .segments
+                .iter()
+                .any(|[start, end, right_start, right_end]| start == end && right_end > right_start)
+        );
     }
 
     #[test]
