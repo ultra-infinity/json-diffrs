@@ -1,6 +1,7 @@
-//! The rig-powered assistant. It runs on its own tokio runtime; its tools do
-//! not touch app state directly but send each [`Command`] to the UI thread,
-//! which applies it exactly like a button press and sends back the result.
+//! The rig-powered assistant. It runs on its own tokio runtime. Each of its
+//! tools turns into a [`Command`] that the [`Host`] applies to the app state,
+//! exactly like the matching button, and whatever happens is reported back
+//! to the UI as an [`AgentEvent`].
 //!
 //! The model is chosen at runtime as a rig provider reference such as
 //! `openai:gpt-5.5`, `anthropic:claude-opus-5-5`, `gemini:gemini-2.5-pro` or
@@ -9,16 +10,16 @@
 
 use crate::state::Command;
 use crate::tools::tool_specs;
-use eframe::egui;
 use rig::completion::Message;
 use rig::message::ToolName;
 use rig::operation::Completion;
 use rig::prelude::*;
 use rig::providers::registry::{ProviderId, ProviderRef};
 use rig::tool::{DynamicTool, ToolExecutionError, ToolOutput};
+use serde::Serialize;
 use serde_json::Value;
-use std::sync::{Arc, mpsc};
-use tokio::sync::{Notify, oneshot};
+use std::sync::Arc;
+use tokio::sync::Notify;
 
 /// Environment variable holding the provider reference to connect at startup.
 pub const MODEL_ENV: &str = "JSON_DIFF_MODEL";
@@ -45,6 +46,18 @@ get_structural_changes (JSON pointers with old and new values) and use next_chan
 get_change to show the user the corresponding lines. Answer concisely and refer to \
 values by their JSON pointer.";
 
+/// The tool results shown in the chat log are cut to this many characters.
+const LOGGED_RESULT_CHARS: usize = 2_000;
+
+/// What the assistant needs from the app.
+pub trait Host: Send + Sync + 'static {
+    /// Applies a tool's command to the app state, exactly like the button
+    /// it stands for.
+    fn apply(&self, command: Command) -> Result<Value, String>;
+    /// Tells the UI what the assistant did.
+    fn emit(&self, event: AgentEvent);
+}
+
 pub enum AgentRequest {
     Connect {
         model: String,
@@ -60,26 +73,32 @@ pub enum AgentRequest {
     Reset,
 }
 
+/// What the chat panel shows, sent to the frontend as the `agent` event.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AgentEvent {
-    /// A tool wants `command` applied; the UI must answer on `reply`.
-    ToolCall {
-        tool: &'static str,
-        arguments: Value,
-        command: Command,
-        reply: oneshot::Sender<Result<Value, String>>,
-    },
     Connected {
         model: String,
     },
-    Reply(String),
-    Failed(String),
+    /// A tool ran; `result` or `error` holds what it returned.
+    Tool {
+        name: String,
+        arguments: String,
+        result: Option<String>,
+        error: Option<String>,
+    },
+    Reply {
+        text: String,
+    },
+    Failed {
+        message: String,
+    },
     Cancelled,
 }
 
 pub struct AgentHandle {
     requests: tokio::sync::mpsc::UnboundedSender<AgentRequest>,
     cancel: Arc<Notify>,
-    pub events: mpsc::Receiver<AgentEvent>,
 }
 
 impl AgentHandle {
@@ -95,15 +114,12 @@ impl AgentHandle {
     }
 }
 
-/// Starts the agent worker thread. `ctx` is used to wake the UI whenever an
-/// event is waiting.
-pub fn spawn(ctx: egui::Context) -> AgentHandle {
+/// Starts the agent worker on its own thread and runtime.
+pub fn spawn(host: Arc<dyn Host>) -> AgentHandle {
     let (requests, request_rx) = tokio::sync::mpsc::unbounded_channel();
-    let (event_tx, events) = mpsc::channel();
     let cancel = Arc::new(Notify::new());
     let worker = Worker {
-        events: event_tx,
-        ctx,
+        host,
         cancel: cancel.clone(),
     };
     std::thread::Builder::new()
@@ -114,17 +130,13 @@ pub fn spawn(ctx: egui::Context) -> AgentHandle {
                 .build()
             {
                 Ok(runtime) => runtime.block_on(worker.run(request_rx)),
-                Err(error) => worker.emit(AgentEvent::Failed(format!(
-                    "cannot start async runtime: {error}"
-                ))),
+                Err(error) => worker.host.emit(AgentEvent::Failed {
+                    message: format!("cannot start async runtime: {error}"),
+                }),
             }
         })
         .expect("spawning the agent thread");
-    AgentHandle {
-        requests,
-        cancel,
-        events,
-    }
+    AgentHandle { requests, cancel }
 }
 
 /// Every provider this build can connect to, as the selection a reference
@@ -153,7 +165,7 @@ fn vendor_of(selection: &str) -> &str {
 }
 
 /// One entry of the settings panel's model list.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ModelChoice {
     /// The id sent to the provider, e.g. `gpt-5.5`.
     pub id: String,
@@ -179,15 +191,6 @@ pub fn catalog_models(selection: &str) -> Vec<ModelChoice> {
     models
 }
 
-/// Splits a `vendor:model` reference into its provider and model id; a
-/// reference without a model leaves the id empty.
-pub fn split_reference(reference: &str) -> (String, String) {
-    match reference.trim().split_once(':') {
-        Some((vendor, model)) => (vendor.to_owned(), model.to_owned()),
-        None => (reference.trim().to_owned(), String::new()),
-    }
-}
-
 /// The environment variable provider `selection` reads its API key from by
 /// default.
 pub fn api_key_env(selection: &str) -> Option<&'static str> {
@@ -196,15 +199,13 @@ pub fn api_key_env(selection: &str) -> Option<&'static str> {
 
 #[derive(Clone)]
 struct Worker {
-    events: mpsc::Sender<AgentEvent>,
-    ctx: egui::Context,
+    host: Arc<dyn Host>,
     cancel: Arc<Notify>,
 }
 
 impl Worker {
     fn emit(&self, event: AgentEvent) {
-        let _ = self.events.send(event);
-        self.ctx.request_repaint();
+        self.host.emit(event);
     }
 
     async fn run(self, mut requests: tokio::sync::mpsc::UnboundedReceiver<AgentRequest>) {
@@ -224,7 +225,7 @@ impl Worker {
                             history.clear();
                             self.emit(AgentEvent::Connected { model });
                         }
-                        Err(error) => self.emit(AgentEvent::Failed(error)),
+                        Err(message) => self.emit(AgentEvent::Failed { message }),
                     }
                 }
                 AgentRequest::Prompt {
@@ -232,7 +233,9 @@ impl Worker {
                     instructions,
                 } => {
                     let Some((model, agent)) = &mut connected else {
-                        self.emit(AgentEvent::Failed("Connect a model first.".into()));
+                        self.emit(AgentEvent::Failed {
+                            message: "Connect a model first.".into(),
+                        });
                         continue;
                     };
                     // Instructions changed (a folder was opened, a file
@@ -244,8 +247,8 @@ impl Worker {
                                 *agent = rebuilt;
                                 current_instructions = instructions;
                             }
-                            Err(error) => {
-                                self.emit(AgentEvent::Failed(error));
+                            Err(message) => {
+                                self.emit(AgentEvent::Failed { message });
                                 continue;
                             }
                         }
@@ -256,8 +259,8 @@ impl Worker {
                     cancelled.as_mut().enable();
                     let event = tokio::select! {
                         result = agent.chat(prompt, &mut history) => match result {
-                            Ok(response) => AgentEvent::Reply(response.output()),
-                            Err(error) => AgentEvent::Failed(error.to_string()),
+                            Ok(response) => AgentEvent::Reply { text: response.output() },
+                            Err(error) => AgentEvent::Failed { message: error.to_string() },
                         },
                         () = &mut cancelled => AgentEvent::Cancelled,
                     };
@@ -282,6 +285,28 @@ impl Worker {
         }
     }
 
+    /// Runs one tool call through the host and logs it in the chat.
+    fn call(
+        &self,
+        name: &'static str,
+        arguments: &Value,
+        command: Command,
+    ) -> Result<Value, String> {
+        let result = self.host.apply(command);
+        self.emit(AgentEvent::Tool {
+            name: name.to_owned(),
+            arguments: abbreviate(&arguments.to_string(), 80),
+            result: result.as_ref().ok().map(|value| {
+                abbreviate(
+                    &serde_json::to_string_pretty(value).unwrap_or_default(),
+                    LOGGED_RESULT_CHARS,
+                )
+            }),
+            error: result.as_ref().err().cloned(),
+        });
+        result
+    }
+
     /// The assistant on `model`, with one tool per app command, following
     /// the AGENTS.md `instructions` section.
     fn agent(&self, model: DynModel<Completion>, instructions: &str) -> Result<Agent, String> {
@@ -299,18 +324,10 @@ impl Worker {
                             ToolExecutionError::invalid_args(message.clone())
                                 .with_model_feedback(message)
                         })?;
-                        let (reply, answer) = oneshot::channel();
-                        worker.emit(AgentEvent::ToolCall {
-                            tool: spec.name,
-                            arguments,
-                            command,
-                            reply,
-                        });
-                        match answer.await {
-                            Ok(Ok(value)) => Ok(ToolOutput::json(value)),
-                            Ok(Err(message)) => Err(ToolExecutionError::other(message.clone())
+                        match worker.call(spec.name, &arguments, command) {
+                            Ok(value) => Ok(ToolOutput::json(value)),
+                            Err(message) => Err(ToolExecutionError::other(message.clone())
                                 .with_model_feedback(message)),
-                            Err(_) => Err(ToolExecutionError::cancelled("the app closed")),
                         }
                     }) as _
                 };
@@ -332,6 +349,15 @@ impl Worker {
     }
 }
 
+/// `text` cut to about `limit` characters, on a character boundary.
+fn abbreviate(text: &str, limit: usize) -> String {
+    if text.len() <= limit {
+        text.to_owned()
+    } else {
+        format!("{}…", &text[..text.floor_char_boundary(limit)])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -341,7 +367,6 @@ mod tests {
     use rig::error::ProviderError;
     use rig::message::{AssistantContent, Origin, ToolCall, ToolFunction, UserContent};
     use rig::test_utils::{MockFrame, MockScript};
-    use std::time::Duration;
 
     /// Every provider in the dropdown resolves, and each catalog model it
     /// offers forms a reference rig accepts.
@@ -363,10 +388,6 @@ mod tests {
             }
         }
         assert!(!catalog_models("openai").is_empty());
-        assert_eq!(
-            split_reference("ollama:qwen3:4b"),
-            ("ollama".into(), "qwen3:4b".into())
-        );
     }
 
     /// A model that asks for `set_options` once, then reports the tool
@@ -408,48 +429,58 @@ mod tests {
         }
     }
 
+    /// Applies commands to a real `AppState` and records what is emitted.
+    #[derive(Default)]
+    struct FakeHost {
+        state: std::sync::Mutex<AppState>,
+        events: std::sync::Mutex<Vec<AgentEvent>>,
+    }
+
+    impl Host for FakeHost {
+        fn apply(&self, command: Command) -> Result<Value, String> {
+            self.state.lock().unwrap().apply(command)
+        }
+
+        fn emit(&self, event: AgentEvent) {
+            self.events.lock().unwrap().push(event);
+        }
+    }
+
     #[tokio::test(flavor = "multi_thread")]
-    async fn tool_calls_are_applied_by_the_ui_and_answered() {
-        let (events, received) = mpsc::channel();
+    async fn tool_calls_reach_the_app_state_and_are_logged() {
+        let host = Arc::new(FakeHost::default());
         let worker = Worker {
-            events,
-            ctx: egui::Context::default(),
+            host: host.clone(),
             cancel: Arc::new(Notify::new()),
         };
         let agent = worker
             .agent(Model::new(MockScript::new("scripted"), Scripted).into(), "")
             .unwrap();
 
-        // Stands in for the UI thread: apply the one expected tool call.
-        let ui = std::thread::spawn(move || {
-            let mut state = AppState::default();
-            let event = received
-                .recv_timeout(Duration::from_secs(10))
-                .expect("a tool call");
-            let AgentEvent::ToolCall {
-                tool,
-                command,
-                reply,
-                ..
-            } = event
-            else {
-                panic!("expected a tool call");
-            };
-            let _ = reply.send(state.apply(command));
-            (tool, state.options.sort_keys)
-        });
-
         let mut history = Vec::new();
         let response = agent.chat("sort the keys", &mut history).await.unwrap();
-        let (tool, sorted) = ui.join().unwrap();
 
-        assert_eq!(tool, "set_options");
-        assert!(sorted, "the command reached AppState");
+        assert!(
+            host.state.lock().unwrap().options.sort_keys,
+            "the command reached AppState"
+        );
+        let events = host.events.lock().unwrap();
+        let [AgentEvent::Tool { name, error, .. }] = events.as_slice() else {
+            panic!("expected one logged tool call, got {events:?}");
+        };
+        assert_eq!(name, "set_options");
+        assert_eq!(*error, None);
         let output = response.output();
         assert!(
             output.contains("sort_keys"),
             "the result reached the model: {output}"
         );
         assert!(!history.is_empty());
+    }
+
+    #[test]
+    fn long_results_are_abbreviated_on_a_char_boundary() {
+        assert_eq!(abbreviate("short", 10), "short");
+        assert_eq!(abbreviate("São Paulo", 2), "S…");
     }
 }

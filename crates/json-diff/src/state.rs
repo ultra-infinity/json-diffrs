@@ -575,6 +575,13 @@ impl AppState {
         self.clamp_current(reset_position);
     }
 
+    /// Text typed into one of the editors: unlike `SetText`, the document
+    /// keeps its file name and the diff keeps its folds.
+    pub fn edit_text(&mut self, side: Side, text: String) {
+        self.docs[side.index()].text = text;
+        self.recompute(false);
+    }
+
     /// Recomputes after new documents were loaded: folds start over.
     fn new_documents(&mut self) {
         self.folds = Folds::default();

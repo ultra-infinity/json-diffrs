@@ -37,8 +37,9 @@ Download `json-diff-<version>-x86_64.msi` from the
 [latest release](https://github.com/ultra-infinity/json-diffrs/releases/latest) and run
 it. The installer adds a Start menu shortcut and puts `json-diff` on your `PATH`.
 
-If you'd rather not install anything, download `json-diff-<version>-x86_64.exe` from the
-same page. It is a single self-contained program with no DLLs to ship alongside it.
+json-diff draws its window with Microsoft Edge WebView2, which comes with Windows 11
+and is kept up to date on Windows 10. If json-diff says it "could not find the WebView2
+Runtime", install it from [Microsoft](https://developer.microsoft.com/microsoft-edge/webview2/).
 
 ### NixOS and Nix
 
@@ -65,11 +66,13 @@ manager and open them with json-diff.
 
 ### From source
 
-You need a recent Rust toolchain (Rust 2024 edition). On Linux you also need the X11 or
-Wayland, xkbcommon and OpenGL development libraries.
+You need a recent Rust toolchain (Rust 2024 edition) and Node.js 22. On Linux you also
+need the GTK 3 and WebKitGTK 4.1 development libraries (`nix develop` provides all of
+this).
 
 ```sh
-cargo build --release
+(cd ui && npm ci && npm run build)
+cargo build --release -p json-diff --features custom-protocol
 ./target/release/json-diff
 ```
 
@@ -91,7 +94,7 @@ opens on the side of the window it lands on.
 | F7 / Alt+↓ | Next change |
 | Shift+F7 / Alt+↑ | Previous change |
 | F5 | Refresh folders |
-| ↑ ↓ PageUp PageDown Home End | Scroll the diff |
+| ↑ ↓ PageUp PageDown Ctrl+Home Ctrl+End | Move through the diff (click into it first) |
 | ← → / Shift+wheel | Scroll sideways |
 
 Click the arrow beside a line number to fold or unfold a key. **Expand all**,
@@ -133,24 +136,33 @@ becomes part of the assistant's instructions.
 
 ## Development
 
-The workspace has two crates:
+json-diff is a [Tauri](https://tauri.app) app: a Rust backend and a React +
+TypeScript frontend that shows the documents in two [Monaco](https://microsoft.github.io/monaco-editor/)
+editors.
 
 - [`crates/json-diff-core`](crates/json-diff-core): UI-independent diffing. It
   contains the structural diff (addressed by JSON pointer), the side-by-side line
   alignment, folding and folder pairing.
-- [`crates/json-diff`](crates/json-diff): the egui app, its state and commands, and
-  the assistant.
+- [`crates/json-diff`](crates/json-diff): the Tauri backend. It holds the app state
+  and its commands, the assistant, and [`view.rs`](crates/json-diff/src/view.rs), the
+  snapshot the frontend draws.
+- [`ui`](ui): the frontend. It keeps no state of its own: it draws the latest snapshot
+  (line colours, changed characters, folds and alignment gaps all come from Rust) and
+  sends every click back to Rust.
 
-Every button and menu item goes through one command type, and every command is also a
-tool for the assistant. A new action therefore needs a `Command` in
-[`state.rs`](crates/json-diff/src/state.rs) and a matching tool in
-[`tools.rs`](crates/json-diff/src/tools.rs).
+Every button and menu item calls the backend's `run` command with the name of one of
+the assistant's tools, so the app and the assistant can always do the same things. A
+new action therefore needs a `Command` in [`state.rs`](crates/json-diff/src/state.rs),
+a matching tool in [`tools.rs`](crates/json-diff/src/tools.rs), and a button that calls
+it through `run`.
 
 ```sh
-nix develop          # toolchain, rust-analyzer and the GUI libraries
+nix develop              # Rust, Node, the Tauri CLI and the GTK/WebKit libraries
+(cd ui && npm ci)
+cargo tauri dev          # the app, with the frontend reloading as you edit it
 cargo test --workspace
 cargo clippy --workspace --all-targets -- --deny warnings
-cargo run -p json-diff
+(cd ui && npm test && npm run typecheck)
 ```
 
 With Nix:
@@ -158,12 +170,10 @@ With Nix:
 | Command | Builds |
 | --- | --- |
 | `nix build` | The Linux package |
-| `nix build .#windows` | `json-diff.exe`, cross-compiled from Linux |
-| `nix build .#msi` | The Windows installer |
-| `nix flake check` | Build, clippy, tests and formatting |
-
-The Windows installer is defined in
-[`crates/json-diff/wix/main.wxs`](crates/json-diff/wix/main.wxs).
+| `nix build .#frontend` | The frontend on its own |
+| `nix build .#windows` | `json-diff.exe` and `WebView2Loader.dll`, cross-compiled from Linux |
+| `nix build .#msi` | The Windows installer ([`main.wxs`](crates/json-diff/wix/main.wxs)) |
+| `nix flake check` | The package, clippy, Rust and frontend tests, and formatting |
 
 ## License
 

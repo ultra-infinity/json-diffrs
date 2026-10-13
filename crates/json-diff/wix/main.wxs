@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Windows installer for json-diff: one self-contained json-diff.exe in
-  Program Files, a Start menu shortcut, and the install folder on PATH so
-  `json-diff original.json modified.json` works from a terminal.
+  Windows installer for json-diff: json-diff.exe and the WebView2 loader it
+  needs (WebView2Loader.dll) in Program Files, a Start menu shortcut, and the
+  install folder on PATH so `json-diff original.json modified.json` works from
+  a terminal.
 
-  Built on Linux by `nix build .#msi` (msitools' wixl), or on Windows with
-  `cargo wix -p json-diff` (WiX Toolset 3, untested). Both define `Version` and
-  `CargoTargetBinDir`.
+  Built on Linux by `nix build .#msi` (msitools' wixl), which defines
+  `Version` and `CargoTargetBinDir`.
 -->
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
   <!-- UpgradeCode must never change: it is how a newer MSI finds and
@@ -46,6 +46,13 @@
                 WorkingDirectory="INSTALLDIR" />
             </File>
           </Component>
+          <Component Id="WebView2Loader" Guid="*" Win64="yes">
+            <File
+              Id="WebView2LoaderDll"
+              Name="WebView2Loader.dll"
+              Source="$(var.CargoTargetBinDir)/WebView2Loader.dll"
+              KeyPath="yes" />
+          </Component>
           <Component Id="Path" Guid="D6271744-F6DA-4018-A139-25528F3E68C3" Win64="yes">
             <RegistryValue
               Root="HKLM"
@@ -70,6 +77,7 @@
 
     <Feature Id="Main" Title="json-diff" Level="1">
       <ComponentRef Id="Executable" />
+      <ComponentRef Id="WebView2Loader" />
       <ComponentRef Id="Path" />
     </Feature>
   </Product>
