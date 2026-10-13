@@ -2,33 +2,12 @@
 // open, files are paired by relative path and badged M / D / A.
 
 import { forwardRef, useMemo, useState, type ReactNode } from "react";
-import { open } from "@tauri-apps/plugin-dialog";
-import type { FileView, FolderView, Run, Side, View } from "../api";
+import { pickFile, pickFolder, sideName, type FileView, type FolderView, type Run, type Side, type View } from "../api";
 import { badgeOf, buildTree, type Directory } from "../tree";
 import { ContextMenu, type MenuItem } from "./Menu";
 
 /** Folders with more files than this start closed. */
 const OPEN_BELOW_FILES = 200;
-
-export async function pickFolder(run: Run, side: Side) {
-  const path = await open({ directory: true, title: `Open ${sideName(side)} folder` });
-  if (typeof path === "string") await run("open_folder", { side, path });
-}
-
-export async function pickFile(run: Run, side: Side) {
-  const path = await open({
-    title: `Open ${sideName(side)} file`,
-    filters: [
-      { name: "JSON files", extensions: ["json"] },
-      { name: "All files", extensions: ["*"] },
-    ],
-  });
-  if (typeof path === "string") await run("select_file", { side, path });
-}
-
-export function sideName(side: Side) {
-  return side === "left" ? "original" : "modified";
-}
 
 export const Explorer = forwardRef<HTMLDivElement, { view: View; run: Run }>(function Explorer(
   { view, run },

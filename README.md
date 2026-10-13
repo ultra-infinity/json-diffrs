@@ -2,10 +2,10 @@
 
 Authored by Omkar Mohanty.
 
-A desktop app for comparing JSON documents side by side, in the style of VS Code's diff
+An app for comparing JSON documents side by side, in the style of VS Code's diff
 editor. It is built for large files: documents open folded to their top-level keys, and
 changes are found by meaning rather than by line, so reformatting and key order don't
-show up as noise. It runs on Windows and Linux.
+show up as noise. It runs on Windows and Linux, and in the browser.
 
 ![json-diff comparing two versions of a service config](docs/screenshot.png)
 
@@ -38,6 +38,17 @@ show up as noise. It runs on Windows and Linux.
   instructions found next to your files.
 
 ## Install
+
+### In your browser
+
+Open **[ultra-infinity.github.io/json-diffrs](https://ultra-infinity.github.io/json-diffrs/)**:
+nothing to install. Open two files with **Open original…** and **Open modified…**, or
+drop them on the page. The comparison runs inside the page, so your files never leave
+your computer.
+
+The web app has the same diff, folding, ignored keys and PDF export, which downloads
+the report. It compares single files only, not folders, and has no assistant. Your
+settings and ignored keys are kept in that browser.
 
 ### Windows
 
@@ -177,19 +188,25 @@ becomes part of the assistant's instructions.
 
 ## Development
 
-json-diff is a [Tauri](https://tauri.app) app: a Rust backend and a React +
-TypeScript frontend that shows the documents in two [Monaco](https://microsoft.github.io/monaco-editor/)
-editors.
+json-diff is a Rust app with a React + TypeScript frontend that shows the documents in
+two [Monaco](https://microsoft.github.io/monaco-editor/) editors. The desktop app is
+built with [Tauri](https://tauri.app); the web app runs the same Rust code compiled to
+WebAssembly.
 
 - [`crates/json-diff-core`](crates/json-diff-core): UI-independent diffing. It
   contains the structural diff (addressed by JSON pointer), the side-by-side line
-  alignment, folding and folder pairing.
-- [`crates/json-diff`](crates/json-diff): the Tauri backend. It holds the app state
-  and its commands, the assistant, and [`view.rs`](crates/json-diff/src/view.rs), the
-  snapshot the frontend draws.
+  alignment, folding, ignored keys and folder pairing.
+- [`crates/json-diff-app`](crates/json-diff-app): the app without a window, shared by
+  both apps. It holds the app state and its commands, PDF reports, settings, and
+  [`view.rs`](crates/json-diff-app/src/view.rs), the snapshot the frontend draws.
+- [`crates/json-diff`](crates/json-diff): the desktop app (Tauri). It adds the window,
+  files and folders on disk, the assistant, the keychain and the updater.
+- [`crates/json-diff-web`](crates/json-diff-web): the web app's WebAssembly module.
 - [`ui`](ui): the frontend. It keeps no state of its own: it draws the latest snapshot
   (line colours, changed characters, folds and how the two sides line up all come from
-  Rust) and sends every click back to Rust.
+  Rust) and sends every click back to Rust. It reaches Rust through
+  [`ui/src/backend`](ui/src/backend): Tauri for the desktop app, the WebAssembly module
+  for the web app, chosen when it is built.
 
 Settings (theme, zoom, panels, diff options, ignored keys, panel widths, the assistant's model) are
 saved to `settings.json` in the OS config folder (`~/.config/io.github.ultra-infinity.json-diff`
@@ -197,9 +214,9 @@ on Linux, `%APPDATA%\io.github.ultra-infinity.json-diff` on Windows).
 
 Every button and menu item calls the backend's `run` command with the name of one of
 the assistant's tools, so the app and the assistant can always do the same things. A
-new action therefore needs a `Command` in [`state.rs`](crates/json-diff/src/state.rs),
-a matching tool in [`tools.rs`](crates/json-diff/src/tools.rs), and a button that calls
-it through `run`.
+new action therefore needs a `Command` in [`state.rs`](crates/json-diff-app/src/state.rs),
+a matching tool in [`tools.rs`](crates/json-diff-app/src/tools.rs), and a button that calls
+it through `run`. Both apps then have it.
 
 ```sh
 nix develop              # Rust, Node, the Tauri CLI and the GTK/WebKit libraries
@@ -210,6 +227,13 @@ cargo clippy --workspace --all-targets -- --deny warnings
 (cd ui && npm test && npm run typecheck)
 ```
 
+The web app, served at http://localhost:1420:
+
+```sh
+nix develop -c scripts/build-wasm.sh    # again after changing Rust code
+(cd ui && npm run dev:web)
+```
+
 With Nix:
 
 | Command | Builds |
@@ -218,7 +242,8 @@ With Nix:
 | `nix build .#frontend` | The frontend on its own |
 | `nix build .#windows` | `json-diff.exe` and `WebView2Loader.dll`, cross-compiled from Linux |
 | `nix build .#msi` | The Windows installer ([`main.wxs`](crates/json-diff/wix/main.wxs)) |
-| `nix flake check` | The package, clippy, Rust and frontend tests, and formatting |
+| `nix build .#web` | The web app: a folder of static files to serve from anywhere |
+| `nix flake check` | Both apps, clippy, Rust and frontend tests, and formatting |
 
 [CI](.github/workflows/ci.yml) runs `nix flake check` and builds the Windows installer
 on every push to `main` and every pull request.
@@ -265,6 +290,10 @@ nix develop -c scripts/release.sh
 It builds and signs the installer, writes the `latest.json` the updater reads (with the
 changelog entry as its notes), and asks before tagging the version and publishing the
 GitHub release, whose notes are the same entry.
+
+Publishing the release also publishes the web app to GitHub Pages
+([`pages.yml`](.github/workflows/pages.yml)). This needs **Settings → Pages → Source:
+GitHub Actions** set once in the repository.
 
 ## License
 

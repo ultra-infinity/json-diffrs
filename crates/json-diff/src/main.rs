@@ -7,19 +7,13 @@
 //! assistant share one set of commands.
 
 mod agent;
-mod agents_md;
-mod changelog;
-mod layout;
 mod licenses;
-mod pdf;
-mod report;
-mod samples;
 mod secrets;
-mod settings;
-mod state;
-mod tools;
 mod update;
-mod view;
+
+// The app itself, shared with the web version; imported under the same
+// names so `crate::state` and the like read as before.
+use json_diff_app::{changelog, layout, pdf, samples, settings, state, tools, view};
 
 use agent::{AgentEvent, AgentHandle, AgentRequest, Host, ModelChoice};
 use layout::Paper;
@@ -461,18 +455,9 @@ fn initial_state(settings: &Settings) -> AppState {
             });
         }
     } else {
-        for (side, text) in [
-            (Side::Left, samples::ORIGINAL),
-            (Side::Right, samples::MODIFIED),
-        ] {
-            let _ = state.apply(Command::SetText {
-                side,
-                text: text.into(),
-            });
-        }
-        state.set_status(
+        samples::show(
+            &mut state,
             "Showing a sample. Open folders in the explorer to compare your own files.",
-            false,
         );
     }
     state

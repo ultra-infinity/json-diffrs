@@ -47,7 +47,7 @@ export function useUpdates(): Updates {
           : phase,
       ),
     );
-    return () => void unlisten.then((stop) => stop());
+    return unlisten;
   }, [check]);
 
   const install = () => {

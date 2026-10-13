@@ -268,9 +268,11 @@ fn summary(layout: &mut Layout, report: &Report, paper: Paper) {
         }
     };
     for (name, source) in ["Original", "Modified"].iter().zip(&report.sources) {
+        // A file opened in the browser has only its name, already shown.
         let path = source
             .path
             .as_ref()
+            .filter(|path| **path != source.label)
             .map_or_else(String::new, |path| format!("  ({path})"));
         paragraph(
             &mut flow,

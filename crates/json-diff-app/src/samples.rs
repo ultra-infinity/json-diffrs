@@ -17,6 +17,19 @@
 //! - `metadata`: same content, keys reordered (disappears with Sort keys);
 //! - `regions`: a long section with no changes (folding hides the noise).
 
+use crate::state::{AppState, Command, Side};
+
+/// Puts the sample on both sides, with `status` explaining it.
+pub fn show(state: &mut AppState, status: &str) {
+    for (side, text) in [(Side::Left, ORIGINAL), (Side::Right, MODIFIED)] {
+        let _ = state.apply(Command::SetText {
+            side,
+            text: text.into(),
+        });
+    }
+    state.set_status(status, false);
+}
+
 pub const ORIGINAL: &str = r##"{
   "service": "checkout-api",
   "version": "2.3.1",

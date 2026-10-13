@@ -31,9 +31,10 @@
         }:
         let
           windowsTarget = "x86_64-pc-windows-gnu";
+          webTarget = "wasm32-unknown-unknown";
           # rust-src is the standard library's source: rust-analyzer needs it
           # to resolve and navigate `std`. The Windows target's std is for
-          # the `windows` and `msi` packages.
+          # the `windows` and `msi` packages, the WebAssembly one for `web`.
           toolchain = pkgs.rust-bin.beta.latest.default.override {
             extensions = [
               "rust-src"
@@ -41,9 +42,14 @@
               "clippy"
               "rustfmt"
             ];
-            targets = [ windowsTarget ];
+            targets = [
+              windowsTarget
+              webTarget
+            ];
           };
           craneLib = (inputs.crane.mkLib pkgs).overrideToolchain toolchain;
+          # Must match the `wasm-bindgen` crate's version exactly.
+          wasm-bindgen-cli = pkgs.wasm-bindgen-cli_0_2_121;
           inherit (craneLib.crateNameFromCargoToml { cargoToml = ./crates/json-diff/Cargo.toml; })
             pname
             version
@@ -80,6 +86,47 @@
             '';
           };
 
+          # The web app: crates/json-diff-web compiled to WebAssembly, with the
+          # JavaScript bindings the frontend imports as `#wasm`.
+          webArgs = {
+            inherit (commonArgs) src strictDeps;
+            inherit version;
+            pname = "${pname}-wasm";
+            cargoExtraArgs = "--locked -p json-diff-web";
+            CARGO_BUILD_TARGET = webTarget;
+            doCheck = false;
+          };
+          wasm = craneLib.buildPackage (
+            webArgs
+            // {
+              cargoArtifacts = craneLib.buildDepsOnly webArgs;
+              installPhaseCommand = ''
+                ${wasm-bindgen-cli}/bin/wasm-bindgen --target web --out-dir $out \
+                  --out-name json_diff_web target/${webTarget}/release/json_diff_web.wasm
+              '';
+            }
+          );
+
+          # The web app as a static site (`dist-web`): the frontend built in
+          # web mode, with the module above. Serve the folder from anywhere.
+          web = frontend.overrideAttrs (old: {
+            pname = "${pname}-web";
+            npmBuildScript = "build:web";
+            # The tests already ran for `frontend`.
+            doCheck = false;
+            preBuild = ''
+              cp -r ${wasm} wasm
+              # vite.config.ts reads the notices from the repository root.
+              cp ${./THIRD_PARTY_NOTICES.txt} ../THIRD_PARTY_NOTICES.txt
+            '';
+            installPhase = ''
+              runHook preInstall
+              cp -r dist-web $out
+              cp ${./LICENSE} $out/LICENSE.txt
+              runHook postInstall
+            '';
+          });
+
           # Tauri on Linux: GTK for the window and dialogs, WebKitGTK for the
           # web view.
           linuxLibs = with pkgs; [
@@ -101,7 +148,7 @@
                 ./crates/json-diff/tauri.conf.json
                 ./crates/json-diff/capabilities
                 ./crates/json-diff/icons
-                ./crates/json-diff/fonts
+                ./crates/json-diff-app/fonts
               ];
             };
             strictDeps = true;
@@ -240,7 +287,7 @@
 
           packages = {
             default = json-diff;
-            inherit frontend;
+            inherit frontend web;
           }
           // lib.optionalAttrs pkgs.stdenv.isLinux {
             windows = json-diff-windows;
@@ -253,7 +300,7 @@
           };
 
           checks = {
-            inherit json-diff frontend;
+            inherit json-diff frontend web;
             clippy = craneLib.cargoClippy (
               commonArgs
               // {
@@ -273,6 +320,7 @@
               pkgs.nodejs_22
               pkgs.cargo-tauri
               pkgs.cargo-about
+              wasm-bindgen-cli
             ];
 
             RUST_SRC_PATH = "${toolchain}/lib/rustlib/src/rust/library";

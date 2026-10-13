@@ -1,7 +1,7 @@
 // The frontend's part of the remembered settings (Rust keeps the rest and
 // writes them all to one settings.json).
 
-import { invoke } from "@tauri-apps/api/core";
+import { loadSavedUiSettings, saveUiSettings } from "./api";
 
 export interface UiSettings {
   explorerWidth?: number;
@@ -24,7 +24,7 @@ let loading: Promise<UiSettings> | null = null;
 
 /** Reads the saved settings once; later calls share the result. */
 export function loadUiSettings(): Promise<UiSettings> {
-  loading ??= invoke<UiSettings | null>("ui_settings").then(
+  loading ??= loadSavedUiSettings().then(
     (saved) => (current = saved ?? {}),
     () => current,
   );
@@ -36,5 +36,5 @@ export const uiSettings = (): UiSettings => current;
 
 export function updateUiSettings(patch: Partial<UiSettings>) {
   current = { ...current, ...patch };
-  void invoke("set_ui_settings", { settings: current });
+  saveUiSettings(current);
 }

@@ -1,6 +1,6 @@
 # Design: export the differences as a PDF
 
-Status: **implemented** in `report.rs`, `layout.rs` and `pdf.rs` (crates/json-diff/src). The decisions are at the end.
+Status: **implemented** in `report.rs`, `layout.rs` and `pdf.rs` (crates/json-diff-app/src). The decisions are at the end.
 
 ## Goal
 
@@ -144,7 +144,7 @@ krilla it is.
 The PDF embeds DejaVu Sans Mono, regular and bold (about 0.66 MB inside the
 app; each PDF carries only the characters it uses). Its license is the
 Bitstream Vera license plus public-domain changes, both permissive. The font
-files go in `crates/json-diff/fonts/` with their license, and
+files go in `crates/json-diff-app/fonts/` with their license, and
 `scripts/notices.sh` gains a section that appends them to
 `THIRD_PARTY_NOTICES.txt`, since `cargo-about` only sees crates.
 

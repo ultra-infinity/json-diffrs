@@ -707,6 +707,17 @@ impl AppState {
         self.clamp_current(reset_position);
     }
 
+    /// A file handed over as text, without a path to read it from again
+    /// (the web app's file picker or a dropped file): `name` labels the side.
+    pub fn open_text(&mut self, side: Side, name: &str, text: String) {
+        self.docs[side.index()] = Document {
+            path: Some(PathBuf::from(name)),
+            text,
+        };
+        self.new_documents();
+        self.set_status(format!("{}: {name}", side.title()), false);
+    }
+
     /// Text typed into one of the editors: unlike `SetText`, the document
     /// keeps its file name and the diff keeps its folds.
     pub fn edit_text(&mut self, side: Side, text: String) {

@@ -1,12 +1,15 @@
 {
   "name": "json-diff-ui",
   "private": true,
-  "version": "0.5.0",
+  "version": "0.6.0",
   "license": "GPL-3.0-or-later",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
+    "wasm": "../scripts/build-wasm.sh",
+    "dev:web": "vite --mode web",
+    "build:web": "tsc --noEmit && vite build --mode web",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },

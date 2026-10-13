@@ -9,6 +9,14 @@ rename it to `## <version> - <date>`; `scripts/release.sh` refuses a version
 with no entry.
 Keep entries to `-` bullets, with `**bold**` and `` `code` `` at most.
 
+## 0.6.0 - 2026-10-13
+
+- **json-diff on the web:** the same diff, folding, ignored keys and PDF
+  export in a browser, with nothing to install. Open or drop two JSON files;
+  they never leave your computer, since the comparison runs in the page. The
+  web app compares single files only and has no assistant.
+- Exported PDFs no longer repeat a file's name as its path.
+
 ## 0.5.0 - 2026-10-13
 
 - **Ignore keys:** right-click a key in the diff to ignore its changes, either

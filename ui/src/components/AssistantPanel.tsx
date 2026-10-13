@@ -69,7 +69,7 @@ export function useAssistant(): Assistant {
           break;
       }
     });
-    return () => void unlisten.then((stop) => stop());
+    return unlisten;
   }, []);
 
   return {

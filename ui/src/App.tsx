@@ -3,12 +3,28 @@
 // turns clicks into commands.
 
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { getView, onView, openPaths, openRelease, releaseNotes, ruleArgs, runCommand, whatsNew, type Release, type Run, type Side, type UpdateInfo, type View } from "./api";
+import {
+  WEB,
+  getView,
+  onDrop,
+  onView,
+  openRelease,
+  pickFile,
+  pickFolder,
+  releaseNotes,
+  ruleArgs,
+  runCommand,
+  whatsNew,
+  type Release,
+  type Run,
+  type Side,
+  type UpdateInfo,
+  type View,
+} from "./api";
 import { AssistantPanel, useAssistant, type Assistant } from "./components/AssistantPanel";
 import { DiffView } from "./components/DiffView";
 import { EditView } from "./components/EditView";
-import { Explorer, pickFile, pickFolder } from "./components/Explorer";
+import { Explorer } from "./components/Explorer";
 import { ExportDialog, ExportedBar } from "./components/ExportDialog";
 import { LicensesDialog } from "./components/LicensesDialog";
 import { ContextMenu, MenuBar, type MenuEntry } from "./components/Menu";
@@ -37,7 +53,7 @@ export function App() {
     void whatsNew().then((releases) => {
       if (releases.length) setNotes({ title: `What's new in json-diff ${releases[0].version}`, releases });
     });
-    return () => void unlisten.then((stop) => stop());
+    return unlisten;
   }, []);
 
   const showAllNotes = useCallback(() => {
@@ -74,11 +90,16 @@ export function App() {
   }, []);
 
   useShortcuts(run, view?.viewMode === "edit");
-  useDrops(explorer, setView);
+  useDrops(explorer, run, setView);
 
   useEffect(() => {
     if (view) document.documentElement.dataset.theme = view.theme;
   }, [view?.theme]);
+
+  // The desktop app titles its window from Rust; a web page titles its tab.
+  useEffect(() => {
+    if (WEB && view) document.title = view.title;
+  }, [view?.title]);
 
   if (!view) return null;
   return (
@@ -93,7 +114,7 @@ export function App() {
       <UpdateBanner updates={updates} onNotes={showUpdateNotes} />
       {exported && <ExportedBar exported={exported} onClose={() => setExported(null)} />}
       <div className="workspace">
-        {view.showExplorer && (
+        {view.showExplorer && !WEB && (
           <Resizable side="left" setting="explorerWidth" initial={260} min={160} max={600}>
             <Explorer ref={explorer} view={view} run={run} />
           </Resizable>
@@ -103,9 +124,11 @@ export function App() {
           {view.viewMode === "diff" ? <DiffView view={view} run={run} /> : <EditView view={view} onView={setView} />}
         </main>
         {/* Hidden rather than unmounted, so the conversation survives. */}
-        <Resizable side="right" setting="assistantWidth" initial={340} min={240} max={700} hidden={!view.showAgent}>
-          <AssistantPanel view={view} run={run} assistant={assistant} />
-        </Resizable>
+        {!WEB && (
+          <Resizable side="right" setting="assistantWidth" initial={340} min={240} max={700} hidden={!view.showAgent}>
+            <AssistantPanel view={view} run={run} assistant={assistant} />
+          </Resizable>
+        )}
       </div>
       <StatusBar view={view} assistant={assistant} />
       {licensesOpen && <LicensesDialog onClose={closeLicenses} />}
@@ -124,20 +147,22 @@ function menus(
   const sides: Side[] = ["left", "right"];
   const title = (side: Side) => (side === "left" ? "Original" : "Modified");
   const option = (key: keyof View["options"]) => () => run("set_options", { [key]: !view.options[key] });
+  /** Leaves out what the web app can't do: folders, the assistant, the
+   *  window, zoom (the browser's own does it) and updates. */
+  const desktop = (...entries: MenuEntry[]): MenuEntry[] => (WEB ? [] : entries);
   return [
     {
       title: "File",
       entries: [
-        ...sides.map((side) => ({ label: `Open ${title(side)} Folder…`, action: () => pickFolder(run, side) })),
+        ...desktop(...sides.map((side) => ({ label: `Open ${title(side)} Folder…`, action: () => pickFolder(run, side) }))),
         ...sides.map((side) => ({ label: `Open ${title(side)} File…`, action: () => pickFile(run, side) })),
         "separator",
         { label: "Export as PDF…", action: dialogs.exportPdf },
         "separator",
-        { label: "Refresh", shortcut: "F5", action: () => run("refresh") },
+        ...desktop({ label: "Refresh", shortcut: "F5", action: () => run("refresh") }),
         { label: "Swap Sides", action: () => run("swap_sides") },
         ...sides.map((side) => ({ label: `Clear ${title(side)}`, action: () => run("clear_side", { side }) })),
-        "separator",
-        { label: "Quit", action: () => run("window", { action: "close" }) },
+        ...desktop("separator", { label: "Quit", action: () => run("window", { action: "close" }) }),
       ],
     },
     {
@@ -145,9 +170,11 @@ function menus(
       entries: [
         { label: "Side-by-side Diff", checked: view.viewMode === "diff", action: () => run("set_view_mode", { mode: "diff" }) },
         { label: "Edit", checked: view.viewMode === "edit", action: () => run("set_view_mode", { mode: "edit" }) },
-        "separator",
-        { label: "Explorer", checked: view.showExplorer, action: () => run("set_panel_visible", { panel: "explorer" }) },
-        { label: "Assistant", checked: view.showAgent, action: () => run("set_panel_visible", { panel: "agent" }) },
+        ...desktop(
+          "separator",
+          { label: "Explorer", checked: view.showExplorer, action: () => run("set_panel_visible", { panel: "explorer" }) },
+          { label: "Assistant", checked: view.showAgent, action: () => run("set_panel_visible", { panel: "agent" }) },
+        ),
         "separator",
         { label: "Expand All", disabled: !view.foldable, action: () => run("expand_all") },
         { label: "Collapse All", disabled: !view.foldable, action: () => run("collapse_all") },
@@ -155,10 +182,12 @@ function menus(
         "separator",
         { label: "Dark Theme", checked: view.theme === "dark", action: () => run("set_theme", { theme: "dark" }) },
         { label: "Light Theme", checked: view.theme === "light", action: () => run("set_theme", { theme: "light" }) },
-        "separator",
-        { label: "Zoom In", action: () => run("zoom_in") },
-        { label: "Zoom Out", action: () => run("zoom_out") },
-        { label: "Reset Zoom", action: () => run("set_zoom", { zoom: 1 }) },
+        ...desktop(
+          "separator",
+          { label: "Zoom In", action: () => run("zoom_in") },
+          { label: "Zoom Out", action: () => run("zoom_out") },
+          { label: "Reset Zoom", action: () => run("set_zoom", { zoom: 1 }) },
+        ),
       ],
     },
     {
@@ -185,8 +214,10 @@ function menus(
       title: "Help",
       entries: [
         { label: "What's New…", action: dialogs.whatsNew },
-        { label: "Check for Updates…", action: () => updates.check(true) },
+        ...desktop({ label: "Check for Updates…", action: () => updates.check(true) }),
         { label: "Licenses…", action: dialogs.showLicenses },
+        // The GPL's offer of the source, for the copy running in the page.
+        ...(WEB ? [{ label: "Source Code…", action: () => void openRelease(SOURCE_URL) }] : []),
         "separator",
         { label: `json-diff ${updates.version}`, disabled: true, action: () => {} },
         { label: "Authored by Omkar Mohanty", disabled: true, action: () => {} },
@@ -194,6 +225,8 @@ function menus(
     },
   ];
 }
+
+const SOURCE_URL = "https://github.com/ultra-infinity/json-diffrs";
 
 function Toolbar({ view, run }: { view: View; run: Run }) {
   const count = view.diff.hunks.length;
@@ -251,6 +284,27 @@ function Toolbar({ view, run }: { view: View; run: Run }) {
         Reveal changes
       </button>
       <IgnoredButton view={view} run={run} />
+      {WEB ? (
+        <>
+          <span className="divider" />
+          <button title="Open the original file…" onClick={() => pickFile(run, "left")}>
+            Open original…
+          </button>
+          <button title="Open the modified file…" onClick={() => pickFile(run, "right")}>
+            Open modified…
+          </button>
+        </>
+      ) : (
+        <PanelToggles view={view} run={run} />
+      )}
+    </div>
+  );
+}
+
+/** Show or hide the explorer and the assistant (desktop). */
+function PanelToggles({ view, run }: { view: View; run: Run }) {
+  return (
+    <>
       <span className="divider" />
       <button className={`toggle${view.showExplorer ? " active" : ""}`} title="Toggle the folder explorer" onClick={() => run("set_panel_visible", { panel: "explorer" })}>
         Explorer
@@ -258,7 +312,7 @@ function Toolbar({ view, run }: { view: View; run: Run }) {
       <button className={`toggle${view.showAgent ? " active" : ""}`} title="Toggle the assistant panel" onClick={() => run("set_panel_visible", { panel: "agent" })}>
         Assistant
       </button>
-    </div>
+    </>
   );
 }
 
@@ -318,8 +372,8 @@ function StatusBar({ view, assistant }: { view: View; assistant: Assistant }) {
       <span>
         {view.diff.hunks.length} changed blocks +{view.addedLines} −{view.removedLines}
       </span>
-      <span>{Math.round(view.zoom * 100)}%</span>
-      <span>{agent}</span>
+      {!WEB && <span>{Math.round(view.zoom * 100)}%</span>}
+      {!WEB && <span>{agent}</span>}
     </footer>
   );
 }
@@ -381,7 +435,8 @@ function useShortcuts(run: Run, editing: boolean) {
       // In edit mode Alt+arrows move lines, as in any Monaco editor.
       else if (event.altKey && !editing && event.key === "ArrowDown") command = "next_change";
       else if (event.altKey && !editing && event.key === "ArrowUp") command = "previous_change";
-      else if (event.key === "F5") command = "refresh";
+      // On the web F5 reloads the page, as usual.
+      else if (event.key === "F5" && !WEB) command = "refresh";
       if (command) {
         event.preventDefault();
         event.stopPropagation();
@@ -396,13 +451,9 @@ function useShortcuts(run: Run, editing: boolean) {
 
 /** Dropped folders open in the explorer half they land on; anything else
  *  opens on the side of the window it lands on. Two items fill both sides. */
-function useDrops(explorer: RefObject<HTMLDivElement | null>, setView: (view: View) => void) {
+function useDrops(explorer: RefObject<HTMLDivElement | null>, run: Run, setView: (view: View) => void) {
   useEffect(() => {
-    const unlisten = getCurrentWebview().onDragDropEvent((event) => {
-      if (event.payload.type !== "drop") return;
-      const ratio = window.devicePixelRatio || 1;
-      const x = event.payload.position.x / ratio;
-      const y = event.payload.position.y / ratio;
+    const sideAt = (x: number, y: number) => {
       let side: Side = x < window.innerWidth / 2 ? "left" : "right";
       const halves = explorer.current?.querySelectorAll<HTMLElement>(".explorer-half");
       halves?.forEach((half) => {
@@ -411,8 +462,8 @@ function useDrops(explorer: RefObject<HTMLDivElement | null>, setView: (view: Vi
           side = half.dataset.side as Side;
         }
       });
-      void openPaths(event.payload.paths, side).then(setView);
-    });
-    return () => void unlisten.then((stop) => stop());
-  }, [explorer, setView]);
+      return side;
+    };
+    return onDrop(sideAt, run, setView);
+  }, [explorer, run, setView]);
 }

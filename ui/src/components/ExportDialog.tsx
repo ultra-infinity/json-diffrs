@@ -2,8 +2,7 @@
 // itself is made in Rust (report.rs, layout.rs, pdf.rs).
 
 import { useEffect, useState } from "react";
-import { save } from "@tauri-apps/plugin-dialog";
-import { exportPdf, openPdf, pdfSuggestedPath, type Paper, type View } from "../api";
+import { WEB, exportPdf, openPdf, type Exported, type Paper, type View } from "../api";
 import { uiSettings, updateUiSettings } from "../uiSettings";
 
 const CONTEXTS: { value: number | null; label: string }[] = [
@@ -19,7 +18,7 @@ export function ExportDialog({
 }: {
   onClose: () => void;
   onView: (view: View) => void;
-  onDone: (exported: { path: string; pages: number }) => void;
+  onDone: (exported: Exported) => void;
 }) {
   const saved = uiSettings();
   const [context, setContext] = useState<number | null>(saved.pdfContext === undefined ? 3 : saved.pdfContext);
@@ -35,16 +34,11 @@ export function ExportDialog({
 
   const start = async () => {
     updateUiSettings({ pdfContext: context, pdfPaper: paper });
-    const path = await save({
-      title: "Save the PDF report",
-      defaultPath: await pdfSuggestedPath(),
-      filters: [{ name: "PDF", extensions: ["pdf"] }],
-    });
-    if (!path) return;
     setBusy(true);
     setProblem(null);
     try {
-      const output = await exportPdf(path, context, paper);
+      const output = await exportPdf(context, paper);
+      if (!output) return;
       onView(output.view);
       if (output.result) {
         onDone(output.result);
@@ -97,7 +91,7 @@ export function ExportDialog({
               Cancel
             </button>
             <button className="primary" disabled={busy} onClick={() => void start()}>
-              {busy ? "Exporting…" : "Export…"}
+              {busy ? "Exporting…" : WEB ? "Download" : "Export…"}
             </button>
           </div>
         </div>
@@ -107,15 +101,17 @@ export function ExportDialog({
 }
 
 /** After an export: where it went, and a button to open it. */
-export function ExportedBar({ exported, onClose }: { exported: { path: string; pages: number }; onClose: () => void }) {
+export function ExportedBar({ exported, onClose }: { exported: Exported; onClose: () => void }) {
   return (
     <div className="banner info" role="status">
       <span>
-        Exported a {exported.pages}-page PDF to {exported.path}
+        {WEB ? `Downloaded a ${exported.pages}-page PDF, ${exported.path}` : `Exported a ${exported.pages}-page PDF to ${exported.path}`}
       </span>
-      <button className="link" onClick={() => void openPdf(exported.path)}>
-        Open
-      </button>
+      {!WEB && (
+        <button className="link" onClick={() => void openPdf(exported.path)}>
+          Open
+        </button>
+      )}
       <span className="spacer" />
       <button className="icon" title="Dismiss" onClick={onClose}>
         <span className="codicon codicon-close" />

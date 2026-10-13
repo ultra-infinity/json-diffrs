@@ -1,8 +1,12 @@
 // The Rust backend's commands and events, typed. `View` mirrors
-// `crates/json-diff/src/view.rs`; keep the two in step.
+// `crates/json-diff-app/src/view.rs`; keep the two in step.
+//
+// The backend is the desktop app (Tauri) or the web app (WebAssembly),
+// chosen when the frontend is built: `#backend` is `backend/desktop.ts` or
+// `backend/web.ts` (vite.config.ts). Components only use this module.
 
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import backend from "#backend";
+import type { UiSettings } from "./uiSettings";
 
 export type Side = "left" | "right";
 export type LineStatus = "unchanged" | "added" | "removed";
@@ -52,9 +56,6 @@ export interface KeyAt {
   key: string | null;
   ignoredBy: IgnoredView | null;
 }
-
-/** `line` is 1-based; `null` for the document's own brackets or plain text. */
-export const keyAt = (side: Side, line: number) => invoke<KeyAt | null>("key_at", { side, line });
 
 /** The `stop_ignoring` arguments that name `rule`. */
 export const ruleArgs = (rule: IgnoreRule) =>
@@ -141,48 +142,16 @@ export type AgentEvent =
   | { kind: "failed"; message: string }
   | { kind: "cancelled" };
 
-interface RunOutput {
+export interface RunOutput {
   result: unknown;
   error: string | null;
   view: View;
 }
 
-export const getView = () => invoke<View>("get_view");
-
-/** Runs one of the assistant's tools, the command behind every button. */
-export const runCommand = (name: string, args: Record<string, unknown> = {}) =>
-  invoke<RunOutput>("run", { name, args });
-
-export const editText = (side: Side, text: string) => invoke<View>("edit_text", { side, text });
-
-export const openPaths = (paths: string[], side: Side) =>
-  invoke<View>("open_paths", { paths, side });
-
-export const providers = () => invoke<string[]>("providers");
-export const models = (provider: string) => invoke<ModelChoice[]>("models", { provider });
-export const apiKeyEnv = (provider: string) => invoke<string | null>("api_key_env", { provider });
-export const startupModel = () => invoke<string | null>("startup_model");
-
-/** Connects the assistant. Rejects only if `remember` was set and the key
- *  could not be saved; the connection itself reports through `onAgent`. */
-export const agentConnect = (model: string, apiKey: string | null, remember: boolean) =>
-  invoke<void>("agent_connect", { model, apiKey, remember });
-/** Whether a key for `provider` is saved in the system keychain. */
-export const savedKey = (provider: string) => invoke<boolean>("saved_key", { provider });
-export const forgetKey = (provider: string) => invoke<void>("forget_key", { provider });
-export const agentPrompt = (text: string) => invoke<void>("agent_prompt", { text });
-export const agentReset = () => invoke<void>("agent_reset");
-export const agentCancel = () => invoke<void>("agent_cancel");
-
-/** The view after the assistant changed something. */
-export const onView = (handler: (view: View) => void): Promise<UnlistenFn> =>
-  listen<View>("view", (event) => handler(event.payload));
-
-export const onAgent = (handler: (event: AgentEvent) => void): Promise<UnlistenFn> =>
-  listen<AgentEvent>("agent", (event) => handler(event.payload));
-
 /** Runs a command, used by every button: returns the new view. */
 export type Run = (name: string, args?: Record<string, unknown>) => Promise<void>;
+
+export type Unlisten = () => void;
 
 export interface UpdateInfo {
   version: string;
@@ -193,22 +162,6 @@ export interface UpdateInfo {
   releaseUrl: string;
 }
 
-/** The newest release if it is newer than this build, else null. Fails when
- *  updates are not set up (no signing key) or offline. */
-export const checkUpdate = () => invoke<UpdateInfo | null>("check_update");
-/** Downloads, verifies and installs the update; the app then closes. */
-export const installUpdate = () => invoke<void>("install_update");
-export const openRelease = (url: string) => invoke<void>("open_release", { url });
-export const appVersion = () => invoke<string>("app_version");
-
-export const onUpdateProgress = (
-  handler: (progress: { downloaded: number; total: number | null }) => void,
-): Promise<UnlistenFn> =>
-  listen<{ downloaded: number; total: number | null }>("update-progress", (event) => handler(event.payload));
-
-/** json-diff's license and those of every bundled library. */
-export const licenses = () => invoke<string>("licenses");
-
 /** One release's entry in CHANGELOG.md. */
 export interface Release {
   version: string;
@@ -217,21 +170,117 @@ export interface Release {
   notes: string;
 }
 
-/** The releases since the version that last ran; empty after the first call. */
-export const whatsNew = () => invoke<Release[]>("whats_new");
-/** Every release up to this one, newest first. */
-export const releaseNotes = () => invoke<Release[]>("release_notes");
-
 export type Paper = "letter" | "a4";
 
-/** Writes the PDF report to `path` (chosen in the save dialog). `context`
- *  null means whole documents. */
-export const exportPdf = async (path: string, context: number | null, paper: Paper) =>
-  invoke<{ result: { path: string; pages: number } | null; error: string | null; view: View }>("export_pdf", {
-    path,
-    context,
-    paper,
-  });
-/** Where the save dialog for a PDF should start. */
-export const pdfSuggestedPath = () => invoke<string>("pdf_suggested_path");
-export const openPdf = (path: string) => invoke<void>("open_pdf", { path });
+/** A finished PDF export: where it went (a path, or the downloaded file's
+ *  name on the web) and its length. */
+export interface Exported {
+  path: string;
+  pages: number;
+}
+
+export interface ExportOutput {
+  result: Exported | null;
+  error: string | null;
+  view: View;
+}
+
+/** What the frontend needs from the app; see `backend/desktop.ts` and
+ *  `backend/web.ts`. */
+export interface Backend {
+  platform: "desktop" | "web";
+  getView(): Promise<View>;
+  /** Runs one of the assistant's tools, the command behind every button. */
+  runCommand(name: string, args: Record<string, unknown>): Promise<RunOutput>;
+  editText(side: Side, text: string): Promise<View>;
+  /** `line` is 1-based; `null` for the document's own brackets or plain text. */
+  keyAt(side: Side, line: number): Promise<KeyAt | null>;
+  /** Asks for a file and opens it on `side`. */
+  pickFile(run: Run, side: Side): Promise<void>;
+  /** Asks for a folder and opens it on `side` (desktop only). */
+  pickFolder(run: Run, side: Side): Promise<void>;
+  /** Opens what is dropped on the window. `sideAt` names the side a single
+   *  item dropped at a point (CSS pixels) goes to; two fill both sides. */
+  onDrop(sideAt: (x: number, y: number) => Side, run: Run, setView: (view: View) => void): Unlisten;
+  /** The view after the assistant changed something. */
+  onView(handler: (view: View) => void): Unlisten;
+  uiSettings(): Promise<UiSettings | null>;
+  setUiSettings(settings: UiSettings): void;
+  /** Asks where to save (desktop) and writes the PDF, or downloads it (web);
+   *  `null` if the user cancelled. `context` null means whole documents. */
+  exportPdf(context: number | null, paper: Paper): Promise<ExportOutput | null>;
+  /** Opens an exported PDF in the system's viewer (desktop only). */
+  openPdf(path: string): Promise<void>;
+  appVersion(): Promise<string>;
+  /** The newest release if it is newer than this build, else null. Fails
+   *  when updates are not set up (no signing key) or offline. */
+  checkUpdate(): Promise<UpdateInfo | null>;
+  /** Downloads, verifies and installs the update; the app then closes. */
+  installUpdate(): Promise<void>;
+  openRelease(url: string): Promise<void>;
+  onUpdateProgress(handler: (progress: { downloaded: number; total: number | null }) => void): Unlisten;
+  /** json-diff's license and those of every bundled library. */
+  licenses(): Promise<string>;
+  /** The releases since the version that last ran; empty after the first call. */
+  whatsNew(): Promise<Release[]>;
+  /** Every release up to this one, newest first. */
+  releaseNotes(): Promise<Release[]>;
+  // The assistant (desktop only).
+  providers(): Promise<string[]>;
+  models(provider: string): Promise<ModelChoice[]>;
+  apiKeyEnv(provider: string): Promise<string | null>;
+  startupModel(): Promise<string | null>;
+  /** Connects the assistant. Rejects only if `remember` was set and the key
+   *  could not be saved; the connection itself reports through `onAgent`. */
+  agentConnect(model: string, apiKey: string | null, remember: boolean): Promise<void>;
+  /** Whether a key for `provider` is saved in the system keychain. */
+  savedKey(provider: string): Promise<boolean>;
+  forgetKey(provider: string): Promise<void>;
+  agentPrompt(text: string): Promise<void>;
+  agentReset(): Promise<void>;
+  agentCancel(): Promise<void>;
+  onAgent(handler: (event: AgentEvent) => void): Unlisten;
+}
+
+/** Which app this frontend was built for. */
+export const PLATFORM = backend.platform;
+export const WEB = PLATFORM === "web";
+
+export const {
+  getView,
+  editText,
+  keyAt,
+  pickFile,
+  pickFolder,
+  onDrop,
+  onView,
+  exportPdf,
+  openPdf,
+  appVersion,
+  checkUpdate,
+  installUpdate,
+  openRelease,
+  onUpdateProgress,
+  licenses,
+  whatsNew,
+  releaseNotes,
+  providers,
+  models,
+  apiKeyEnv,
+  startupModel,
+  agentConnect,
+  savedKey,
+  forgetKey,
+  agentPrompt,
+  agentReset,
+  agentCancel,
+  onAgent,
+} = backend;
+
+export const runCommand = (name: string, args: Record<string, unknown> = {}) => backend.runCommand(name, args);
+export const loadSavedUiSettings = () => backend.uiSettings();
+export const saveUiSettings = (settings: UiSettings) => backend.setUiSettings(settings);
+
+export function sideName(side: Side) {
+  return side === "left" ? "original" : "modified";
+}

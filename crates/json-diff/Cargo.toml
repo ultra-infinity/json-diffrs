@@ -1,6 +1,6 @@
 [package]
 name = "json-diff"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2024"
 description = "Side-by-side JSON diff with folder comparison and an AI assistant"
 authors.workspace = true
@@ -15,17 +15,15 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 serde = { version = "1.0.0", features = ["derive"] }
 serde_json = "1.0.0"
-semver = "1"
 json-diff-core = { path = "../json-diff-core" }
+json-diff-app = { path = "../json-diff-app" }
 rig = "0.44"
-schemars = "1"
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-updater = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
 keyring = { version = "3.6.3", features = ["windows-native", "async-secret-service", "crypto-rust", "tokio"] }
-krilla = { version = "0.8.2", default-features = false, features = ["simple-text"] }
 
 [dev-dependencies]
 futures = "0.3"
