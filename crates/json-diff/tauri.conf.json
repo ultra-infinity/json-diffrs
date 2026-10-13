@@ -43,7 +43,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDkyODIzRTU5NzlGMDcyMjMKUldRamN2QjVXVDZDa21VQ1lrT1B4K2Z5dCtHMm8rV29yQ3pHRW1jeiticjFjMkpybmlqd04xVXAK",
       "endpoints": [
         "https://github.com/ultra-infinity/json-diffrs/releases/latest/download/latest.json"
       ],

@@ -9,17 +9,22 @@ import { AssistantPanel, useAssistant, type Assistant } from "./components/Assis
 import { DiffView } from "./components/DiffView";
 import { EditView } from "./components/EditView";
 import { Explorer, pickFile, pickFolder } from "./components/Explorer";
+import { LicensesDialog } from "./components/LicensesDialog";
 import { MenuBar, type MenuEntry } from "./components/Menu";
+import { loadUiSettings, uiSettings, updateUiSettings } from "./uiSettings";
 import { UpdateBanner, useUpdates, type Updates } from "./components/UpdateBanner";
 
 export function App() {
   const [view, setView] = useState<View | null>(null);
   const assistant = useAssistant();
   const updates = useUpdates();
+  const [licensesOpen, setLicensesOpen] = useState(false);
+  const closeLicenses = useCallback(() => setLicensesOpen(false), []);
   const explorer = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    void getView().then(setView);
+    // Saved panel widths and model choice are needed for the first render.
+    void Promise.all([getView(), loadUiSettings()]).then(([view]) => setView(view));
     const unlisten = onView(setView);
     return () => void unlisten.then((stop) => stop());
   }, []);
@@ -42,11 +47,11 @@ export function App() {
   if (!view) return null;
   return (
     <div className="app">
-      <MenuBar menus={menus(view, run, updates)} />
+      <MenuBar menus={menus(view, run, updates, () => setLicensesOpen(true))} />
       <UpdateBanner updates={updates} />
       <div className="workspace">
         {view.showExplorer && (
-          <Resizable side="left" initial={260} min={160} max={600}>
+          <Resizable side="left" setting="explorerWidth" initial={260} min={160} max={600}>
             <Explorer ref={explorer} view={view} run={run} />
           </Resizable>
         )}
@@ -55,16 +60,22 @@ export function App() {
           {view.viewMode === "diff" ? <DiffView view={view} run={run} /> : <EditView view={view} onView={setView} />}
         </main>
         {/* Hidden rather than unmounted, so the conversation survives. */}
-        <Resizable side="right" initial={340} min={240} max={700} hidden={!view.showAgent}>
+        <Resizable side="right" setting="assistantWidth" initial={340} min={240} max={700} hidden={!view.showAgent}>
           <AssistantPanel view={view} run={run} assistant={assistant} />
         </Resizable>
       </div>
       <StatusBar view={view} assistant={assistant} />
+      {licensesOpen && <LicensesDialog onClose={closeLicenses} />}
     </div>
   );
 }
 
-function menus(view: View, run: Run, updates: Updates): { title: string; entries: MenuEntry[] }[] {
+function menus(
+  view: View,
+  run: Run,
+  updates: Updates,
+  showLicenses: () => void,
+): { title: string; entries: MenuEntry[] }[] {
   const sides: Side[] = ["left", "right"];
   const title = (side: Side) => (side === "left" ? "Original" : "Modified");
   const option = (key: keyof View["options"]) => () => run("set_options", { [key]: !view.options[key] });
@@ -127,6 +138,7 @@ function menus(view: View, run: Run, updates: Updates): { title: string; entries
       title: "Help",
       entries: [
         { label: "Check for Updates…", action: () => updates.check(true) },
+        { label: "Licenses…", action: showLicenses },
         "separator",
         { label: `json-diff ${updates.version}`, disabled: true, action: () => {} },
       ],
@@ -225,9 +237,11 @@ function StatusBar({ view, assistant }: { view: View; assistant: Assistant }) {
   );
 }
 
-/** A side panel whose width can be dragged. */
+/** A side panel whose width can be dragged, and is remembered under
+ *  `setting`. */
 function Resizable({
   side,
+  setting,
   initial,
   min,
   max,
@@ -235,23 +249,30 @@ function Resizable({
   children,
 }: {
   side: "left" | "right";
+  setting: "explorerWidth" | "assistantWidth";
   initial: number;
   min: number;
   max: number;
   hidden?: boolean;
   children: ReactNode;
 }) {
-  const [width, setWidth] = useState(initial);
+  const clamp = (value: number) => Math.min(max, Math.max(min, value));
+  const [width, setWidth] = useState(() => clamp(uiSettings()[setting] ?? initial));
   const startDrag = (event: ReactPointerEvent) => {
+    // A drag resizes; it must not also select text.
+    event.preventDefault();
     const startX = event.clientX;
     const startWidth = width;
+    let latest = width;
     const move = (moved: PointerEvent) => {
       const delta = side === "left" ? moved.clientX - startX : startX - moved.clientX;
-      setWidth(Math.min(max, Math.max(min, startWidth + delta)));
+      latest = clamp(startWidth + delta);
+      setWidth(latest);
     };
     const stop = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", stop);
+      updateUiSettings({ [setting]: Math.round(latest) });
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", stop);

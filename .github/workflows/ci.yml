@@ -1,0 +1,52 @@
+# Checks every push to main and every pull request with the same Nix
+# commands used locally (README > Development).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch makes older runs pointless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Build, lint and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      # The Linux package, clippy, Rust and frontend tests, formatting.
+      - run: nix flake check -L
+
+  windows:
+    name: Windows installer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - run: nix build .#msi -L
+      - uses: actions/upload-artifact@v4
+        with:
+          name: json-diff-msi
+          path: result/*.msi
+
+  notices:
+    name: Third-party notices are current
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - run: nix develop -c scripts/notices.sh
+      - name: THIRD_PARTY_NOTICES.txt matches the dependencies
+        run: |
+          git diff --exit-code THIRD_PARTY_NOTICES.txt || {
+            echo "::error::Dependencies changed: run 'nix develop -c scripts/notices.sh' and commit THIRD_PARTY_NOTICES.txt"
+            exit 1
+          }

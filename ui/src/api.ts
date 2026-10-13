@@ -135,8 +135,13 @@ export const models = (provider: string) => invoke<ModelChoice[]>("models", { pr
 export const apiKeyEnv = (provider: string) => invoke<string | null>("api_key_env", { provider });
 export const startupModel = () => invoke<string | null>("startup_model");
 
-export const agentConnect = (model: string, apiKey: string | null) =>
-  invoke<void>("agent_connect", { model, apiKey });
+/** Connects the assistant. Rejects only if `remember` was set and the key
+ *  could not be saved; the connection itself reports through `onAgent`. */
+export const agentConnect = (model: string, apiKey: string | null, remember: boolean) =>
+  invoke<void>("agent_connect", { model, apiKey, remember });
+/** Whether a key for `provider` is saved in the system keychain. */
+export const savedKey = (provider: string) => invoke<boolean>("saved_key", { provider });
+export const forgetKey = (provider: string) => invoke<void>("forget_key", { provider });
 export const agentPrompt = (text: string) => invoke<void>("agent_prompt", { text });
 export const agentReset = () => invoke<void>("agent_reset");
 export const agentCancel = () => invoke<void>("agent_cancel");
@@ -172,3 +177,6 @@ export const onUpdateProgress = (
   handler: (progress: { downloaded: number; total: number | null }) => void,
 ): Promise<UnlistenFn> =>
   listen<{ downloaded: number; total: number | null }>("update-progress", (event) => handler(event.payload));
+
+/** json-diff's license and those of every bundled library. */
+export const licenses = () => invoke<string>("licenses");

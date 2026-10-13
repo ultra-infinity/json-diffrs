@@ -1,10 +1,12 @@
 [package]
 name = "json-diff-core"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 description = "Structural and side-by-side JSON diffing, addressed by JSON pointer"
 license.workspace = true
 repository.workspace = true
+# Shipped as an app, not on crates.io (where the name is taken anyway).
+publish = false
 
 [dependencies]
 serde_json = { version = "1.0.0", features = ["preserve_order"] }

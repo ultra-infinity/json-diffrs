@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Windows installer for json-diff: json-diff.exe and the WebView2 loader it
-  needs (WebView2Loader.dll) in Program Files, a Start menu shortcut, and the
-  install folder on PATH so `json-diff original.json modified.json` works from
-  a terminal.
+  Windows installer for json-diff: json-diff.exe, the WebView2 loader it needs
+  (WebView2Loader.dll) and the license texts in Program Files, a Start menu
+  shortcut, and the install folder on PATH so
+  `json-diff original.json modified.json` works from a terminal.
 
   Built on Linux by `nix build .#msi` (msitools' wixl), which defines
   `Version` and `CargoTargetBinDir`.
@@ -53,6 +53,17 @@
               Source="$(var.CargoTargetBinDir)/WebView2Loader.dll"
               KeyPath="yes" />
           </Component>
+          <Component Id="Licenses" Guid="*" Win64="yes">
+            <File
+              Id="LicenseTxt"
+              Name="LICENSE.txt"
+              Source="$(var.CargoTargetBinDir)/LICENSE.txt"
+              KeyPath="yes" />
+            <File
+              Id="ThirdPartyNotices"
+              Name="THIRD_PARTY_NOTICES.txt"
+              Source="$(var.CargoTargetBinDir)/THIRD_PARTY_NOTICES.txt" />
+          </Component>
           <Component Id="Path" Guid="D6271744-F6DA-4018-A139-25528F3E68C3" Win64="yes">
             <RegistryValue
               Root="HKLM"
@@ -78,6 +89,7 @@
     <Feature Id="Main" Title="json-diff" Level="1">
       <ComponentRef Id="Executable" />
       <ComponentRef Id="WebView2Loader" />
+      <ComponentRef Id="Licenses" />
       <ComponentRef Id="Path" />
     </Feature>
   </Product>

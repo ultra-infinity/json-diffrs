@@ -119,7 +119,14 @@ Click the arrow beside a line number to fold or unfold a key. **Expand all**,
    Ollama don't need a key.
 4. Click **Connect**.
 
-To connect automatically at startup, set `JSON_DIFF_MODEL`, for example
+With **Remember this key** ticked, the key is kept in your system keychain (Windows
+Credential Manager, or GNOME Keyring or KWallet on Linux) and used whenever you pick
+that provider again. json-diff never writes keys to a file of its own. **Forget it**
+removes a saved key. Without a keychain (some minimal Linux setups), keys simply
+aren't remembered.
+
+json-diff also remembers the provider and model, and reconnects to them when it
+starts. To choose the model from outside instead, set `JSON_DIFF_MODEL`, for example
 `JSON_DIFF_MODEL=openai:gpt-5.5`.
 
 Every tool call the assistant makes is shown in the panel as it happens. It can open
@@ -155,8 +162,12 @@ editors.
   and its commands, the assistant, and [`view.rs`](crates/json-diff/src/view.rs), the
   snapshot the frontend draws.
 - [`ui`](ui): the frontend. It keeps no state of its own: it draws the latest snapshot
-  (line colours, changed characters, folds and alignment gaps all come from Rust) and
-  sends every click back to Rust.
+  (line colours, changed characters, folds and how the two sides line up all come from
+  Rust) and sends every click back to Rust.
+
+Settings (theme, zoom, panels, diff options, panel widths, the assistant's model) are
+saved to `settings.json` in the OS config folder (`~/.config/io.github.ultra-infinity.json-diff`
+on Linux, `%APPDATA%\io.github.ultra-infinity.json-diff` on Windows).
 
 Every button and menu item calls the backend's `run` command with the name of one of
 the assistant's tools, so the app and the assistant can always do the same things. A
@@ -182,6 +193,20 @@ With Nix:
 | `nix build .#windows` | `json-diff.exe` and `WebView2Loader.dll`, cross-compiled from Linux |
 | `nix build .#msi` | The Windows installer ([`main.wxs`](crates/json-diff/wix/main.wxs)) |
 | `nix flake check` | The package, clippy, Rust and frontend tests, and formatting |
+
+[CI](.github/workflows/ci.yml) runs `nix flake check` and builds the Windows installer
+on every push to `main` and every pull request.
+
+**After changing dependencies,** regenerate
+[`THIRD_PARTY_NOTICES.txt`](THIRD_PARTY_NOTICES.txt), the licenses of every bundled
+library, which ships with the app:
+
+```sh
+nix develop -c scripts/notices.sh
+```
+
+It fails if a new dependency's license isn't on the accepted list in
+[`licenses/about.toml`](licenses/about.toml). CI fails if the file is out of date.
 
 ## Releasing
 
@@ -218,3 +243,7 @@ json-diff is free software: you can redistribute it and/or modify it under the t
 the GNU General Public License as published by the Free Software Foundation, either
 version 3 of the License, or (at your option) any later version. See
 [LICENSE](LICENSE).
+
+It includes third-party libraries under their own licenses, listed in
+[THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt). The same list ships with every
+build and is shown under **Help → Licenses…**.

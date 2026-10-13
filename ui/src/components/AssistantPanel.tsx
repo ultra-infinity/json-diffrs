@@ -9,15 +9,18 @@ import {
   agentPrompt,
   agentReset,
   apiKeyEnv,
+  forgetKey,
   models as fetchModels,
   onAgent,
   providers as fetchProviders,
+  savedKey,
   startupModel,
   type ModelChoice,
   type Run,
   type View,
 } from "../api";
 import { Combobox } from "./Combobox";
+import { uiSettings, updateUiSettings } from "../uiSettings";
 
 export type ChatEntry =
   | { kind: "user" | "assistant" | "error" | "info"; text: string }
@@ -28,7 +31,8 @@ export interface Assistant {
   busy: boolean;
   connected: string | null;
   send: (text: string) => void;
-  connect: (model: string, apiKey: string | null) => void;
+  /** Rejects only if a key to remember could not be saved. */
+  connect: (model: string, apiKey: string | null, remember: boolean) => Promise<void>;
   reset: () => void;
 }
 
@@ -44,6 +48,8 @@ export function useAssistant(): Assistant {
       switch (event.kind) {
         case "connected":
           setConnected(event.model);
+          // Reconnect to it next time.
+          updateUiSettings({ connected: event.model });
           add({ kind: "info", text: `Connected to ${event.model}.` });
           break;
         case "tool":
@@ -75,7 +81,10 @@ export function useAssistant(): Assistant {
       setBusy(true);
       void agentPrompt(text);
     }, []),
-    connect: useCallback((model: string, apiKey: string | null) => void agentConnect(model, apiKey), []),
+    connect: useCallback(
+      (model: string, apiKey: string | null, remember: boolean) => agentConnect(model, apiKey, remember),
+      [],
+    ),
     reset: useCallback(() => {
       setEntries([]);
       void agentReset();
@@ -114,36 +123,52 @@ function Section({ title, defaultOpen = false, children }: { title: string; defa
 }
 
 function ModelSettings({ assistant }: { assistant: Assistant }) {
+  const saved = uiSettings();
   const [providerList, setProviderList] = useState<string[]>([]);
-  const [provider, setProvider] = useState("");
+  const [provider, setProvider] = useState(saved.provider ?? "");
   const [modelList, setModelList] = useState<ModelChoice[]>([]);
-  const [model, setModel] = useState("");
-  const [custom, setCustom] = useState(false);
+  const [model, setModel] = useState(saved.model ?? "");
+  const [custom, setCustom] = useState(saved.customModel ?? false);
   const [apiKey, setApiKey] = useState("");
+  const [remember, setRemember] = useState(true);
   const [keyEnv, setKeyEnv] = useState<string | null>(null);
+  /** A key for this provider is in the system keychain. */
+  const [keySaved, setKeySaved] = useState(false);
+  const [keyProblem, setKeyProblem] = useState<string | null>(null);
 
   useEffect(() => {
     void fetchProviders().then(setProviderList);
-    // `JSON_DIFF_MODEL=provider:model` connects at startup.
     void startupModel().then(async (reference) => {
-      if (!reference) return;
-      const split = reference.indexOf(":");
-      const [vendor, id] = split < 0 ? [reference, ""] : [reference.slice(0, split), reference.slice(split + 1)];
-      setProvider(vendor);
-      setModel(id);
-      const listed = await fetchModels(vendor);
-      setCustom(id !== "" && !listed.some((choice) => choice.id === id));
-      assistant.connect(reference, null);
+      // `JSON_DIFF_MODEL=provider:model` connects at startup...
+      if (reference) {
+        const split = reference.indexOf(":");
+        const [vendor, id] = split < 0 ? [reference, ""] : [reference.slice(0, split), reference.slice(split + 1)];
+        setProvider(vendor);
+        setModel(id);
+        const listed = await fetchModels(vendor);
+        setCustom(id !== "" && !listed.some((choice) => choice.id === id));
+        void assistant.connect(reference, null, false);
+      } else if (saved.connected) {
+        // ...otherwise the model used last time does, with its saved key.
+        void assistant.connect(saved.connected, null, false);
+      }
     });
   }, []);
 
   useEffect(() => {
     setModelList([]);
     setKeyEnv(null);
+    setKeySaved(false);
+    setKeyProblem(null);
     if (!provider) return;
     void fetchModels(provider).then(setModelList);
     void apiKeyEnv(provider).then(setKeyEnv);
+    void savedKey(provider).then(setKeySaved);
   }, [provider]);
+
+  useEffect(() => {
+    updateUiSettings({ provider, model: model.trim(), customModel: custom });
+  }, [provider, model, custom]);
 
   const listed = modelList.length > 0;
   const reference = provider && model.trim() ? `${provider}:${model.trim()}` : null;
@@ -152,6 +177,23 @@ function ModelSettings({ assistant }: { assistant: Assistant }) {
     () => modelList.map((choice) => ({ id: choice.id, label: choice.name })),
     [modelList],
   );
+
+  const connect = () => {
+    if (!reference) return;
+    const key = apiKey.trim() || null;
+    setApiKey("");
+    setKeyProblem(null);
+    assistant.connect(reference, key, remember).then(
+      () => key && remember && setKeySaved(true),
+      (error) => setKeyProblem(String(error)),
+    );
+  };
+
+  const forget = () =>
+    forgetKey(provider).then(
+      () => setKeySaved(false),
+      (error) => setKeyProblem(String(error)),
+    );
 
   return (
     <div className="model-settings">
@@ -210,15 +252,30 @@ function ModelSettings({ assistant }: { assistant: Assistant }) {
       <input
         className="wide"
         type="password"
-        placeholder={keyEnv ? `API key (default: $${keyEnv})` : "API key (optional)"}
+        placeholder={
+          keySaved ? "API key (using your saved key)" : keyEnv ? `API key (default: $${keyEnv})` : "API key (optional)"
+        }
         value={apiKey}
         onChange={(event) => setApiKey(event.target.value)}
+        onKeyDown={(event) => event.key === "Enter" && connect()}
       />
-      <button
-        className="wide"
-        disabled={!reference || assistant.busy}
-        onClick={() => reference && assistant.connect(reference, apiKey.trim() || null)}
-      >
+      {apiKey ? (
+        <label className="wide check">
+          <input type="checkbox" checked={remember} onChange={(event) => setRemember(event.target.checked)} />
+          Remember this key in the system keychain
+        </label>
+      ) : (
+        keySaved && (
+          <p className="wide note">
+            A key for {provider} is saved in your system keychain.{" "}
+            <button className="link" onClick={() => void forget()}>
+              Forget it
+            </button>
+          </p>
+        )
+      )}
+      {keyProblem && <p className="wide note error">{keyProblem}</p>}
+      <button className="wide" disabled={!reference || assistant.busy} onClick={connect}>
         Connect
       </button>
     </div>

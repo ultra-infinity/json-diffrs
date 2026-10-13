@@ -8,7 +8,10 @@
 
 mod agent;
 mod agents_md;
+mod licenses;
 mod samples;
+mod secrets;
+mod settings;
 mod state;
 mod tools;
 mod update;
@@ -17,6 +20,7 @@ mod view;
 use agent::{AgentEvent, AgentHandle, AgentRequest, Host, ModelChoice};
 use serde::Serialize;
 use serde_json::Value;
+use settings::Settings;
 use state::{AppState, Command, Side, WindowAction};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -34,14 +38,21 @@ struct Core {
     /// The zoom last applied to the webview, as `f32` bits.
     applied_zoom: AtomicU32,
     applied_title: Mutex<String>,
+    /// Where settings are remembered; `None` if the OS has no config
+    /// directory, in which case nothing is remembered.
+    settings_path: Option<PathBuf>,
+    /// The settings as last written, so unchanged ones are not rewritten.
+    saved: Mutex<Settings>,
 }
 
 impl Core {
-    fn new(state: AppState) -> Self {
+    fn new(state: AppState, settings_path: Option<PathBuf>, saved: Settings) -> Self {
         Self {
             state: Mutex::new(state),
             applied_zoom: AtomicU32::new(1.0f32.to_bits()),
             applied_title: Mutex::new(String::new()),
+            settings_path,
+            saved: Mutex::new(saved),
         }
     }
 
@@ -49,11 +60,30 @@ impl Core {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// Writes the settings if `state` (or the frontend's part, when given)
+    /// changed them.
+    fn remember(&self, state: &AppState, ui: Option<Value>) {
+        let mut saved = self.saved.lock().unwrap_or_else(PoisonError::into_inner);
+        let ui = ui.unwrap_or_else(|| saved.ui.clone());
+        let settings = Settings::of(state, ui);
+        if settings == *saved {
+            return;
+        }
+        if let Some(path) = &self.settings_path
+            && let Err(error) = settings.save(path)
+        {
+            eprintln!("could not save settings to {}: {error}", path.display());
+        }
+        *saved = settings;
+    }
+
     /// Runs `change` on the state, carries out what it asked of the window,
-    /// and snapshots the result for the frontend.
+    /// remembers changed settings, and snapshots the result for the
+    /// frontend.
     fn update<R>(&self, app: &AppHandle, change: impl FnOnce(&mut AppState) -> R) -> (R, View) {
         let mut state = self.lock();
         let result = change(&mut state);
+        self.remember(&state, None);
         let window = app.get_webview_window("main");
         for action in std::mem::take(&mut state.window_requests) {
             let Some(window) = &window else { break };
@@ -186,12 +216,67 @@ fn startup_model() -> Option<String> {
         .filter(|model| !model.trim().is_empty())
 }
 
+/// Connects the assistant to `model` (`provider:model`). A key typed in is
+/// used, and saved in the keychain when `remember` is set; without one, the
+/// key saved for that provider is used, then its environment variable.
+/// Fails only when a key could not be remembered; the connection itself
+/// reports through the `agent` event.
 #[tauri::command]
-fn agent_connect(agent: State<AgentHandle>, model: String, api_key: Option<String>) {
-    agent.send(AgentRequest::Connect {
-        model,
-        api_key: api_key.filter(|key| !key.trim().is_empty()),
-    });
+async fn agent_connect(
+    agent: State<'_, AgentHandle>,
+    model: String,
+    api_key: Option<String>,
+    remember: bool,
+) -> Result<(), String> {
+    let provider = secrets::provider_of(&model).to_owned();
+    let typed = api_key.filter(|key| !key.trim().is_empty());
+    let (api_key, saved) = blocking(move || match typed {
+        Some(key) if remember => {
+            let saved = secrets::save(&provider, &key);
+            (Some(key), saved)
+        }
+        Some(key) => (Some(key), Ok(())),
+        None => (secrets::load(&provider), Ok(())),
+    })
+    .await?;
+    agent.send(AgentRequest::Connect { model, api_key });
+    saved.map_err(|error| format!("the key was used but not remembered: {error}"))
+}
+
+/// Whether a key for `provider` is saved in the keychain.
+#[tauri::command]
+async fn saved_key(provider: String) -> Result<bool, String> {
+    blocking(move || secrets::load(&provider).is_some()).await
+}
+
+#[tauri::command]
+async fn forget_key(provider: String) -> Result<(), String> {
+    blocking(move || secrets::forget(&provider)).await?
+}
+
+/// The frontend's remembered settings (panel widths, provider and model).
+#[tauri::command]
+fn ui_settings(core: State<Arc<Core>>) -> Value {
+    core.saved
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .ui
+        .clone()
+}
+
+#[tauri::command]
+fn set_ui_settings(core: State<Arc<Core>>, settings: Value) {
+    let state = core.lock();
+    core.remember(&state, Some(settings));
+}
+
+/// Runs keychain work, which blocks, off the async runtime.
+async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -224,8 +309,9 @@ fn open_command(side: Side, path: PathBuf) -> Command {
 
 /// `json-diff <original> <modified>` opens two files or two folders;
 /// without arguments a sample comparison is shown.
-fn initial_state() -> AppState {
+fn initial_state(settings: &Settings) -> AppState {
     let mut state = AppState::default();
+    settings.apply_to(&mut state);
     let args: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
     if let [left, right] = args.as_slice() {
         for (side, path) in Side::BOTH.into_iter().zip([left, right]) {
@@ -260,13 +346,22 @@ fn initial_state() -> AppState {
 }
 
 fn main() {
-    let core = Arc::new(Core::new(initial_state()));
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(update::PendingUpdate::default())
-        .setup(move |app| {
+        .setup(|app| {
+            let settings_path = app
+                .path()
+                .app_config_dir()
+                .ok()
+                .map(|directory| directory.join("settings.json"));
+            let settings = settings_path
+                .as_deref()
+                .and_then(Settings::load)
+                .unwrap_or_default();
+            let core = Arc::new(Core::new(initial_state(&settings), settings_path, settings));
             let host = TauriHost {
                 core: core.clone(),
                 app: app.handle().clone(),
@@ -288,10 +383,15 @@ fn main() {
             agent_prompt,
             agent_reset,
             agent_cancel,
+            saved_key,
+            forget_key,
+            ui_settings,
+            set_ui_settings,
             update::check_update,
             update::install_update,
             update::open_release,
             update::app_version,
+            licenses::licenses,
         ])
         .run(tauri::generate_context!())
         .expect("failed to start json-diff");

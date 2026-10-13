@@ -95,6 +95,8 @@
               root = ./.;
               fileset = lib.fileset.unions [
                 (craneLib.fileset.commonCargoSources ./.)
+                ./LICENSE
+                ./THIRD_PARTY_NOTICES.txt
                 ./crates/json-diff/tauri.conf.json
                 ./crates/json-diff/capabilities
                 ./crates/json-diff/icons
@@ -152,6 +154,7 @@
                 done
                 install -Dm644 crates/json-diff/icons/icon.png \
                   $out/share/icons/hicolor/512x512/apps/json-diff.png
+                install -Dm644 -t $out/share/doc/json-diff LICENSE THIRD_PARTY_NOTICES.txt
               '';
               meta = {
                 description = "Side-by-side JSON diff with folder comparison and an AI assistant";
@@ -211,6 +214,8 @@
                 # epoch, which Windows would show as 2098. Use a fixed date.
                 mkdir -p bin $out
                 cp ${json-diff-windows}/bin/json-diff.exe ${json-diff-windows}/bin/WebView2Loader.dll bin/
+                cp ${./LICENSE} bin/LICENSE.txt
+                cp ${./THIRD_PARTY_NOTICES.txt} bin/THIRD_PARTY_NOTICES.txt
                 touch -d 2000-01-01T00:00:00Z bin/*
                 wixl --arch x64 \
                   -D Version=${version} \
@@ -259,6 +264,7 @@
             packages = [
               pkgs.nodejs_22
               pkgs.cargo-tauri
+              pkgs.cargo-about
             ];
 
             RUST_SRC_PATH = "${toolchain}/lib/rustlib/src/rust/library";
