@@ -1,8 +1,9 @@
 [package]
 name = "json-diff"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 description = "Side-by-side JSON diff with folder comparison and an AI assistant"
+authors.workspace = true
 license.workspace = true
 repository.workspace = true
 # Shipped as an app, not on crates.io (where the name is taken anyway).
@@ -23,6 +24,7 @@ tauri-plugin-opener = "2"
 tauri-plugin-updater = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
 keyring = { version = "3.6.3", features = ["windows-native", "async-secret-service", "crypto-rust", "tokio"] }
+krilla = { version = "0.8.2", default-features = false, features = ["simple-text"] }
 
 [dev-dependencies]
 futures = "0.3"

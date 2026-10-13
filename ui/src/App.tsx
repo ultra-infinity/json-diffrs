@@ -9,6 +9,7 @@ import { AssistantPanel, useAssistant, type Assistant } from "./components/Assis
 import { DiffView } from "./components/DiffView";
 import { EditView } from "./components/EditView";
 import { Explorer, pickFile, pickFolder } from "./components/Explorer";
+import { ExportDialog, ExportedBar } from "./components/ExportDialog";
 import { LicensesDialog } from "./components/LicensesDialog";
 import { MenuBar, type MenuEntry } from "./components/Menu";
 import { loadUiSettings, uiSettings, updateUiSettings } from "./uiSettings";
@@ -20,6 +21,9 @@ export function App() {
   const updates = useUpdates();
   const [licensesOpen, setLicensesOpen] = useState(false);
   const closeLicenses = useCallback(() => setLicensesOpen(false), []);
+  const [exportOpen, setExportOpen] = useState(false);
+  const closeExport = useCallback(() => setExportOpen(false), []);
+  const [exported, setExported] = useState<{ path: string; pages: number } | null>(null);
   const explorer = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -47,8 +51,14 @@ export function App() {
   if (!view) return null;
   return (
     <div className="app">
-      <MenuBar menus={menus(view, run, updates, () => setLicensesOpen(true))} />
+      <MenuBar
+        menus={menus(view, run, updates, {
+          showLicenses: () => setLicensesOpen(true),
+          exportPdf: () => setExportOpen(true),
+        })}
+      />
       <UpdateBanner updates={updates} />
+      {exported && <ExportedBar exported={exported} onClose={() => setExported(null)} />}
       <div className="workspace">
         {view.showExplorer && (
           <Resizable side="left" setting="explorerWidth" initial={260} min={160} max={600}>
@@ -66,6 +76,7 @@ export function App() {
       </div>
       <StatusBar view={view} assistant={assistant} />
       {licensesOpen && <LicensesDialog onClose={closeLicenses} />}
+      {exportOpen && <ExportDialog onClose={closeExport} onView={setView} onDone={setExported} />}
     </div>
   );
 }
@@ -74,7 +85,7 @@ function menus(
   view: View,
   run: Run,
   updates: Updates,
-  showLicenses: () => void,
+  dialogs: { showLicenses: () => void; exportPdf: () => void },
 ): { title: string; entries: MenuEntry[] }[] {
   const sides: Side[] = ["left", "right"];
   const title = (side: Side) => (side === "left" ? "Original" : "Modified");
@@ -85,6 +96,8 @@ function menus(
       entries: [
         ...sides.map((side) => ({ label: `Open ${title(side)} Folder…`, action: () => pickFolder(run, side) })),
         ...sides.map((side) => ({ label: `Open ${title(side)} File…`, action: () => pickFile(run, side) })),
+        "separator",
+        { label: "Export as PDF…", action: dialogs.exportPdf },
         "separator",
         { label: "Refresh", shortcut: "F5", action: () => run("refresh") },
         { label: "Swap Sides", action: () => run("swap_sides") },
@@ -138,9 +151,10 @@ function menus(
       title: "Help",
       entries: [
         { label: "Check for Updates…", action: () => updates.check(true) },
-        { label: "Licenses…", action: showLicenses },
+        { label: "Licenses…", action: dialogs.showLicenses },
         "separator",
         { label: `json-diff ${updates.version}`, disabled: true, action: () => {} },
+        { label: "Authored by Omkar Mohanty", disabled: true, action: () => {} },
       ],
     },
   ];

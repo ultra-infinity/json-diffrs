@@ -1,8 +1,9 @@
 [package]
 name = "json-diff-core"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 description = "Structural and side-by-side JSON diffing, addressed by JSON pointer"
+authors.workspace = true
 license.workspace = true
 repository.workspace = true
 # Shipped as an app, not on crates.io (where the name is taken anyway).

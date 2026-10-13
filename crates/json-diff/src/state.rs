@@ -6,6 +6,8 @@
 //! need the window are queued in [`AppState::window_requests`].
 
 use crate::agents_md::AgentsMd;
+use crate::layout::Paper;
+use crate::pdf;
 use json_diff_core::{
     DiffOptions, Folds, JsonDiff, PairEntry, PairStatus, compare_folders, diff_json_texts_folded,
     scan_json_files,
@@ -178,6 +180,15 @@ pub enum Command {
     SetAgentsMdEnabled {
         path: PathBuf,
         enabled: bool,
+    },
+    /// Writes a PDF report: the list of changes, then the side-by-side diff
+    /// with `context` unchanged lines around each change (`None`: whole
+    /// documents). `path: None` means the user has yet to choose the file;
+    /// the app asks before anything is written.
+    ExportPdf {
+        path: Option<PathBuf>,
+        context: Option<usize>,
+        paper: Paper,
     },
 }
 
@@ -462,6 +473,23 @@ impl AppState {
             Command::SetAgentsMdEnabled { path, enabled } => {
                 self.agents_md.set_enabled(&path, enabled)?;
                 Ok(json!({ "agents_md": self.agents_md_files() }))
+            }
+            Command::ExportPdf {
+                path,
+                context,
+                paper,
+            } => {
+                let path =
+                    path.ok_or("the user chooses where the PDF is saved; nothing was written")?;
+                let path = pdf::with_pdf_extension(path);
+                let report = pdf::export(self, context, paper, std::time::SystemTime::now())?;
+                std::fs::write(&path, &report.bytes)
+                    .map_err(|error| format!("could not write {}: {error}", path.display()))?;
+                self.set_status(
+                    format!("Exported a {}-page PDF to {}", report.pages, path.display()),
+                    false,
+                );
+                Ok(json!({ "path": path, "pages": report.pages }))
             }
             Command::ListFiles { side } => {
                 let folder = self.folders[side.index()]

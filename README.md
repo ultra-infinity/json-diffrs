@@ -1,5 +1,7 @@
 # json-diff
 
+Authored by Omkar Mohanty.
+
 A desktop app for comparing JSON documents side by side, in the style of VS Code's diff
 editor. It is built for large files: documents open folded to their top-level keys, and
 changes are found by meaning rather than by line, so reformatting and key order don't
@@ -108,6 +110,18 @@ opens on the side of the window it lands on.
 Click the arrow beside a line number to fold or unfold a key. **Expand all**,
 **Collapse all** and **Reveal changes** in the toolbar act on the whole document.
 
+### Export as PDF
+
+**File → Export as PDF…** saves the comparison for people who don't have json-diff:
+
+- **First, a summary:** every change, listed by JSON pointer, with its original and
+  new value.
+- **Then the side-by-side diff,** in red and green, with 3 lines of context around
+  each change. You can choose 10 lines or the whole documents instead.
+- **Paper:** US Letter or A4.
+
+The report always includes everything, whatever is folded on screen.
+
 ## The assistant
 
 1. Open the **Assistant** panel.
@@ -130,8 +144,9 @@ starts. To choose the model from outside instead, set `JSON_DIFF_MODEL`, for exa
 `JSON_DIFF_MODEL=openai:gpt-5.5`.
 
 Every tool call the assistant makes is shown in the panel as it happens. It can open
-files and change the view, but it can't modify or delete anything on disk. Your API key
-is only sent to the provider you pick.
+files and change the view, but it can't modify or delete anything on disk. It can
+export a PDF only when you ask for one, and you choose where it goes in the save
+dialog. Your API key is only sent to the provider you pick.
 
 ### AGENTS.md
 

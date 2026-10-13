@@ -100,6 +100,7 @@
                 ./crates/json-diff/tauri.conf.json
                 ./crates/json-diff/capabilities
                 ./crates/json-diff/icons
+                ./crates/json-diff/fonts
               ];
             };
             strictDeps = true;
@@ -140,6 +141,9 @@
                   comment = "Compare JSON documents and folders side by side";
                   exec = "json-diff %F";
                   icon = "json-diff";
+                  # The window's class: lets docks show this entry's icon
+                  # for the running app.
+                  startupWMClass = "json-diff";
                   categories = [
                     "Development"
                     "Utility"
@@ -152,6 +156,8 @@
                   install -Dm644 crates/json-diff/icons/''${size}x''${size}.png \
                     $out/share/icons/hicolor/''${size}x''${size}/apps/json-diff.png
                 done
+                install -Dm644 crates/json-diff/icons/128x128@2x.png \
+                  $out/share/icons/hicolor/256x256/apps/json-diff.png
                 install -Dm644 crates/json-diff/icons/icon.png \
                   $out/share/icons/hicolor/512x512/apps/json-diff.png
                 install -Dm644 -t $out/share/doc/json-diff LICENSE THIRD_PARTY_NOTICES.txt
@@ -216,6 +222,7 @@
                 cp ${json-diff-windows}/bin/json-diff.exe ${json-diff-windows}/bin/WebView2Loader.dll bin/
                 cp ${./LICENSE} bin/LICENSE.txt
                 cp ${./THIRD_PARTY_NOTICES.txt} bin/THIRD_PARTY_NOTICES.txt
+                cp ${./crates/json-diff/icons/icon.ico} bin/json-diff.ico
                 touch -d 2000-01-01T00:00:00Z bin/*
                 wixl --arch x64 \
                   -D Version=${version} \

@@ -1,6 +1,7 @@
 //! The agent-facing tool catalogue: one tool per [`Command`], each with a
 //! JSON schema generated from its typed arguments.
 
+use crate::layout::Paper;
 use crate::state::{Command, PanelKind, Side, Theme, ViewMode, WindowAction};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -77,6 +78,18 @@ struct InstructionsToggleArgs {
     /// `get_state`.
     path: PathBuf,
     enabled: bool,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct ExportArgs {
+    /// Unchanged lines to show around each change in the side-by-side pages
+    /// (default 3).
+    context: Option<usize>,
+    /// Show both documents in full instead of only the changes.
+    #[serde(default)]
+    full: bool,
+    /// `letter` (default) or `a4`.
+    paper: Option<Paper>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -237,6 +250,12 @@ tools! {
         InstructionsArgs => |a| Command::RemoveAgentsMd { path: a.path };
     "set_agents_md_enabled": "Use (enabled=true) or ignore (enabled=false) one of the instruction files listed under agents_md in get_state. Only when the user asks.",
         InstructionsToggleArgs => |a| Command::SetAgentsMdEnabled { path: a.path, enabled: a.enabled };
+    "export_pdf": "Export the comparison as a PDF report: every change by JSON pointer with old and new values, then the side-by-side diff. Only call this when the user explicitly asks for a PDF. It opens a save dialog where the user chooses the file; if they cancel, nothing is written. Same as File > Export as PDF.",
+        ExportArgs => |a| Command::ExportPdf {
+            path: None,
+            context: if a.full { None } else { Some(a.context.unwrap_or(crate::pdf::DEFAULT_CONTEXT)) },
+            paper: a.paper.unwrap_or_default(),
+        };
 }
 
 #[cfg(test)]

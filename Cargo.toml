@@ -3,6 +3,7 @@ resolver = "3"
 members = ["crates/*"]
 
 [workspace.package]
+authors = ["Omkar Mohanty"]
 license = "GPL-3.0-or-later"
 repository = "https://github.com/ultra-infinity/json-diffrs"
 

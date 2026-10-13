@@ -180,3 +180,17 @@ export const onUpdateProgress = (
 
 /** json-diff's license and those of every bundled library. */
 export const licenses = () => invoke<string>("licenses");
+
+export type Paper = "letter" | "a4";
+
+/** Writes the PDF report to `path` (chosen in the save dialog). `context`
+ *  null means whole documents. */
+export const exportPdf = async (path: string, context: number | null, paper: Paper) =>
+  invoke<{ result: { path: string; pages: number } | null; error: string | null; view: View }>("export_pdf", {
+    path,
+    context,
+    paper,
+  });
+/** Where the save dialog for a PDF should start. */
+export const pdfSuggestedPath = () => invoke<string>("pdf_suggested_path");
+export const openPdf = (path: string) => invoke<void>("open_pdf", { path });

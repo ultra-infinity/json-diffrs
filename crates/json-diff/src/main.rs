@@ -8,7 +8,10 @@
 
 mod agent;
 mod agents_md;
+mod layout;
 mod licenses;
+mod pdf;
+mod report;
 mod samples;
 mod secrets;
 mod settings;
@@ -18,6 +21,7 @@ mod update;
 mod view;
 
 use agent::{AgentEvent, AgentHandle, AgentRequest, Host, ModelChoice};
+use layout::Paper;
 use serde::Serialize;
 use serde_json::Value;
 use settings::Settings;
@@ -26,6 +30,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
 use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_opener::OpenerExt;
 use tools::{ToolSpec, tool_specs};
 use view::View;
 
@@ -124,6 +130,25 @@ struct TauriHost {
 
 impl Host for TauriHost {
     fn apply(&self, command: Command) -> Result<Value, String> {
+        // The assistant never chooses where a PDF goes: the user does, in the
+        // save dialog, and cancelling writes nothing.
+        let command = match command {
+            Command::ExportPdf {
+                path: None,
+                context,
+                paper,
+            } => {
+                let suggested = pdf::suggested_path(&self.core.lock());
+                let path = save_dialog(&self.app, &suggested)
+                    .ok_or("the user cancelled the export; nothing was written")?;
+                Command::ExportPdf {
+                    path: Some(path),
+                    context,
+                    paper,
+                }
+            }
+            command => command,
+        };
         let (result, view) = self.core.update(&self.app, |state| state.apply(command));
         let _ = self.app.emit("view", view);
         result
@@ -168,6 +193,69 @@ fn run(
         result: result.ok(),
         view,
     })
+}
+
+/// File > Export as PDF, once the user picked `path` in the save dialog.
+#[tauri::command]
+fn export_pdf(
+    app: AppHandle,
+    core: State<Arc<Core>>,
+    path: PathBuf,
+    context: Option<usize>,
+    paper: Paper,
+) -> RunOutput {
+    let (result, view) = core.update(&app, |state| {
+        state.apply(Command::ExportPdf {
+            path: Some(path),
+            context,
+            paper,
+        })
+    });
+    RunOutput {
+        error: result.as_ref().err().cloned(),
+        result: result.ok(),
+        view,
+    }
+}
+
+/// Where the export's save dialog starts.
+#[tauri::command]
+fn pdf_suggested_path(core: State<Arc<Core>>) -> String {
+    pdf::suggested_path(&core.lock()).display().to_string()
+}
+
+/// Opens an exported PDF in the system's viewer.
+#[tauri::command]
+fn open_pdf(app: AppHandle, path: PathBuf) -> Result<(), String> {
+    if !path
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("pdf"))
+    {
+        return Err(format!("{} is not a PDF", path.display()));
+    }
+    app.opener()
+        .open_path(path.display().to_string(), None::<&str>)
+        .map_err(|error| error.to_string())
+}
+
+/// Asks where to save a PDF, starting at `suggested`. Blocks, so it must not
+/// run on the main thread (the assistant's tools don't).
+fn save_dialog(app: &AppHandle, suggested: &std::path::Path) -> Option<PathBuf> {
+    let mut dialog = app
+        .dialog()
+        .file()
+        .set_title("Save the PDF report")
+        .add_filter("PDF", &["pdf"]);
+    if let Some(name) = suggested.file_name() {
+        dialog = dialog.set_file_name(name.to_string_lossy());
+    }
+    if let Some(folder) = suggested
+        .parent()
+        .filter(|folder| !folder.as_os_str().is_empty())
+    {
+        dialog = dialog.set_directory(folder);
+    }
+    dialog.blocking_save_file()?.into_path().ok()
 }
 
 /// Text typed in edit mode.
@@ -362,6 +450,14 @@ fn main() {
                 .and_then(Settings::load)
                 .unwrap_or_default();
             let core = Arc::new(Core::new(initial_state(&settings), settings_path, settings));
+            // Taskbars and window switchers show the window's own icon (X11 and
+            // Windows read it from the window); the launcher entry and the exe
+            // carry it for app menus and search.
+            if let (Some(window), Some(icon)) =
+                (app.get_webview_window("main"), app.default_window_icon())
+            {
+                let _ = window.set_icon(icon.clone());
+            }
             let host = TauriHost {
                 core: core.clone(),
                 app: app.handle().clone(),
@@ -374,6 +470,9 @@ fn main() {
             get_view,
             run,
             edit_text,
+            export_pdf,
+            pdf_suggested_path,
+            open_pdf,
             open_paths,
             providers,
             models,

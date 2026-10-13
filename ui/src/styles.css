@@ -943,3 +943,42 @@ button.link {
   user-select: text;
   background: var(--bg);
 }
+
+.modal.small {
+  width: min(460px, 90vw);
+  height: auto;
+}
+
+.export-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 14px 14px;
+}
+
+.export-body p {
+  margin: 0;
+}
+
+.export-body fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 10px 8px;
+}
+
+.export-body label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.export-body .note.error {
+  color: var(--del-border);
+}
+
+.row.end {
+  justify-content: flex-end;
+}

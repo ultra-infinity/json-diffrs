@@ -12,6 +12,9 @@ export interface UiSettings {
   /** The `provider:model` the assistant was connected to; reconnects at
    *  startup. */
   connected?: string | null;
+  /** PDF export: unchanged lines around each change (null: whole documents). */
+  pdfContext?: number | null;
+  pdfPaper?: "letter" | "a4";
 }
 
 let current: UiSettings = {};

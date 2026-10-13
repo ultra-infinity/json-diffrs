@@ -27,6 +27,10 @@
       Comments="Compare JSON documents and folders side by side." />
 
     <MajorUpgrade DowngradeErrorMessage="A newer version of json-diff is already installed." />
+    <!-- The app icon in Add/Remove Programs and on the Start menu shortcut;
+         the exe carries the same icon for search and the taskbar. -->
+    <Icon Id="AppIcon" SourceFile="$(var.CargoTargetBinDir)/json-diff.ico" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon" />
     <Media Id="1" Cabinet="json_diff.cab" EmbedCab="yes" />
 
     <Directory Id="TARGETDIR" Name="SourceDir">
@@ -43,6 +47,7 @@
                 Directory="ProgramMenuFolder"
                 Name="json-diff"
                 Description="Compare JSON documents side by side"
+                Icon="AppIcon"
                 WorkingDirectory="INSTALLDIR" />
             </File>
           </Component>
