@@ -13,6 +13,8 @@ export default defineConfig(({ mode }) => {
     clearScreen: false,
     // Tauri loads the dev server from this fixed port (see tauri.conf.json).
     server: { port: 1420, strictPort: true },
+    // Only the app's own page: not the copy in dist-web/ from a web build.
+    optimizeDeps: { entries: ["index.html"] },
     // The site works from any folder, e.g. a GitHub Pages project path.
     base: web ? "./" : "/",
     resolve: {

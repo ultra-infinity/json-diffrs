@@ -12,6 +12,11 @@ self.MonacoEnvironment = {
   },
 };
 
+// Monaco adds the codicon classes (chevrons, folder icons) to the page when
+// the first editor is created. The app may open on the tree, with no editor,
+// so ask for them now: colorizing registers the page the same way.
+void monaco.editor.colorize("", "plaintext", {});
+
 export { monaco };
 
 export const FONT_FAMILY =

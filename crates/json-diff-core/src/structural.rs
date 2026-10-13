@@ -117,6 +117,13 @@ impl PathMap {
         Some(target)
     }
 
+    /// The matched elements of the array at `left_array` (a pointer in the
+    /// original document): original index to modified index. `None` if the
+    /// array was not compared (it exists on one side only).
+    pub(crate) fn pairs(&self, left_array: &str) -> Option<&HashMap<usize, usize>> {
+        self.left_to_right.get(left_array)
+    }
+
     fn pair(&mut self, old_array: &str, new_array: &str, i: usize, j: usize) {
         self.left_to_right
             .entry(old_array.to_owned())

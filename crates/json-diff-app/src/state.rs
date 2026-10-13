@@ -9,12 +9,13 @@ use crate::agents_md::AgentsMd;
 use crate::layout::Paper;
 use crate::pdf;
 use json_diff_core::{
-    DiffOptions, Folds, IgnoreRule, JsonDiff, PairEntry, PairStatus, compare_folders,
-    diff_json_texts_ignoring, scan_json_files,
+    DiffOptions, Folds, IgnoreRule, JsonDiff, PairEntry, PairStatus, TreeOptions, TreeRow,
+    compare_folders, diff_json_texts_ignoring, scan_json_files,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 /// Files larger than this are refused rather than freezing the UI.
@@ -56,6 +57,8 @@ impl Side {
 pub enum ViewMode {
     /// Side-by-side diff.
     Diff,
+    /// Both documents as one tree of keys, changes marked.
+    Tree,
     /// Two editable text panes.
     Edit,
 }
@@ -125,6 +128,21 @@ pub enum Command {
     SetViewMode {
         mode: ViewMode,
     },
+    /// The tree view: show unchanged keys too, or only the paths to
+    /// changes; open every path to a change (`open_changes`), or fold it all
+    /// to the top level. Setting `open_changes` forgets nodes opened or
+    /// closed by hand.
+    SetTreeOptions {
+        show_unchanged: Option<bool>,
+        open_changes: Option<bool>,
+    },
+    /// Opens or closes a node of the tree view (`id` as in its rows).
+    SetTreeExpanded {
+        id: String,
+        expanded: bool,
+    },
+    /// The tree view's visible rows.
+    GetTree,
     SetZoom {
         zoom: f32,
     },
@@ -249,6 +267,13 @@ pub struct AppState {
     /// Set when the view should scroll to `current_hunk`.
     pub scroll_to_current: bool,
     pub view_mode: ViewMode,
+    /// The tree view also lists unchanged keys.
+    pub tree_show_unchanged: bool,
+    /// The tree view opens every path to a change (Reveal changes) rather
+    /// than starting folded to the top level.
+    pub tree_open_changes: bool,
+    /// Tree nodes the user opened or closed, against their default.
+    pub tree_toggled: HashSet<String>,
     pub theme: Theme,
     pub zoom: f32,
     pub show_explorer: bool,
@@ -272,7 +297,11 @@ impl Default for AppState {
             folds: Folds::default(),
             current_hunk: None,
             scroll_to_current: false,
-            view_mode: ViewMode::Diff,
+            // The tree reads most naturally; Diff and Edit are a click away.
+            view_mode: ViewMode::Tree,
+            tree_show_unchanged: false,
+            tree_open_changes: false,
+            tree_toggled: HashSet::new(),
             theme: Theme::Dark,
             zoom: 1.0,
             show_explorer: true,
@@ -441,6 +470,47 @@ impl AppState {
             Command::SetViewMode { mode } => {
                 self.view_mode = mode;
                 Ok(json!({ "view_mode": mode }))
+            }
+            Command::SetTreeOptions {
+                show_unchanged,
+                open_changes,
+            } => {
+                if let Some(show) = show_unchanged {
+                    self.tree_show_unchanged = show;
+                }
+                if let Some(open) = open_changes {
+                    self.tree_open_changes = open;
+                    self.tree_toggled.clear();
+                }
+                Ok(json!({
+                    "show_unchanged": self.tree_show_unchanged,
+                    "open_changes": self.tree_open_changes,
+                }))
+            }
+            Command::GetTree => {
+                let rows = self.tree_rows().ok_or(
+                    "the tree view needs two valid JSON documents; see get_state for parse errors",
+                )?;
+                let total = rows.len();
+                Ok(json!({
+                    "show_unchanged": self.tree_show_unchanged,
+                    "total": total,
+                    "rows": rows.into_iter().take(MAX_LISTED).collect::<Vec<_>>(),
+                }))
+            }
+            Command::SetTreeExpanded { id, expanded } => {
+                // The set records the rows flipped from how they start.
+                let rows = self.tree_rows().ok_or(
+                    "the tree view needs two valid JSON documents; see get_state for parse errors",
+                )?;
+                let row = rows
+                    .iter()
+                    .find(|row| row.id == id)
+                    .ok_or_else(|| format!("no tree node {id} is shown"))?;
+                if row.expanded != Some(expanded) && !self.tree_toggled.remove(&id) {
+                    self.tree_toggled.insert(id.clone());
+                }
+                Ok(json!({ "id": id, "expanded": expanded }))
             }
             Command::SetZoom { zoom } => {
                 if !(0.25..=5.0).contains(&zoom) {
@@ -683,6 +753,16 @@ impl AppState {
         )
     }
 
+    /// The tree view's rows, as its options and toggles say; `None` unless
+    /// both documents are valid JSON.
+    pub fn tree_rows(&self) -> Option<Vec<TreeRow>> {
+        self.diff.tree(&TreeOptions {
+            show_unchanged: self.tree_show_unchanged,
+            open_changes: self.tree_open_changes,
+            toggled: &self.tree_toggled,
+        })
+    }
+
     /// The ignore rules as people read them.
     pub fn ignored_labels(&self) -> Vec<String> {
         self.ignored.iter().map(ToString::to_string).collect()
@@ -728,6 +808,9 @@ impl AppState {
     /// Recomputes after new documents were loaded: folds start over.
     fn new_documents(&mut self) {
         self.folds = Folds::default();
+        // New documents open folded, in the tree as in the line view.
+        self.tree_open_changes = false;
+        self.tree_toggled.clear();
         self.recompute(true);
     }
 

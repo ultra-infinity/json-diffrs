@@ -9,6 +9,16 @@ rename it to `## <version> - <date>`; `scripts/release.sh` refuses a version
 with no entry.
 Keep entries to `-` bullets, with `**bold**` and `` `code` `` at most.
 
+## 0.7.0 - 2026-10-13
+
+- **Tree view, now the default:** json-diff opens on **Tree**, which shows
+  both documents as one tree of keys instead of lines. A changed value reads
+  old → new, added and removed keys are green and red, and each object or
+  array says how many changes it holds. It opens folded to the top-level keys
+  that changed; **Reveal changes** opens every path to a change, and **Show
+  unchanged** adds the rest. Right-click a key to ignore it. The line diff is
+  one click away under **Diff**.
+
 ## 0.6.1 - 2026-10-13
 
 - json-diff is now released under the MIT License. Versions up to 0.6.0 were

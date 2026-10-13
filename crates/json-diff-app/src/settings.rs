@@ -20,6 +20,8 @@ pub struct Settings {
     pub options: DiffOptions,
     /// Keys whose changes are ignored, kept for every later comparison.
     pub ignored: Vec<IgnoreRule>,
+    /// The tree view lists unchanged keys too.
+    pub tree_show_unchanged: bool,
     /// Kept for the frontend: panel widths, the chosen provider and model.
     pub ui: Value,
     /// The version that last ran, so the next one knows what's new to it.
@@ -42,6 +44,7 @@ impl Settings {
             show_agent: state.show_agent,
             options: state.options,
             ignored: state.ignored.clone(),
+            tree_show_unchanged: state.tree_show_unchanged,
             ui,
             last_version: None,
         }
@@ -60,6 +63,10 @@ impl Settings {
             Command::SetPanelVisible {
                 panel: PanelKind::Agent,
                 visible: Some(self.show_agent),
+            },
+            Command::SetTreeOptions {
+                show_unchanged: Some(self.tree_show_unchanged),
+                open_changes: None,
             },
             Command::SetOptions {
                 format: Some(self.options.format),

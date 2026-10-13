@@ -4126,7 +4126,7 @@ dependencies = [
 
 [[package]]
 name = "json-diff"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "futures",
  "json-diff-app",
@@ -4146,7 +4146,7 @@ dependencies = [
 
 [[package]]
 name = "json-diff-app"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "json-diff-core",
  "krilla",
@@ -4159,7 +4159,7 @@ dependencies = [
 
 [[package]]
 name = "json-diff-core"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4169,7 +4169,7 @@ dependencies = [
 
 [[package]]
 name = "json-diff-web"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "json-diff-app",
  "serde",

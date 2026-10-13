@@ -11,7 +11,7 @@ import type { UiSettings } from "./uiSettings";
 export type Side = "left" | "right";
 export type LineStatus = "unchanged" | "added" | "removed";
 export type PairStatus = "identical" | "modified" | "only_left" | "only_right";
-export type ViewMode = "diff" | "edit";
+export type ViewMode = "diff" | "tree" | "edit";
 export type Theme = "dark" | "light";
 
 export interface View {
@@ -19,6 +19,8 @@ export interface View {
   paired: boolean;
   docs: [DocView, DocView];
   diff: DiffView;
+  /** Only in the tree view mode. */
+  tree: TreeView | null;
   currentHunk: number | null;
   reveal: number | null;
   options: { format: boolean; sort_keys: boolean; ignore_whitespace: boolean };
@@ -38,6 +40,34 @@ export interface View {
   addedLines: number;
   removedLines: number;
   title: string;
+}
+
+export interface TreeView {
+  /** `null` when a side is not valid JSON. */
+  rows: TreeRow[] | null;
+  showUnchanged: boolean;
+}
+
+/** `changed`: an object or array with changes inside. */
+export type TreeStatus = "unchanged" | "added" | "removed" | "modified" | "changed";
+
+/** One visible node of the merged tree (crates/json-diff-core/src/tree.rs). */
+export interface TreeRow {
+  /** For expand_tree_node / collapse_tree_node. */
+  id: string;
+  depth: number;
+  /** The key, or `[index]` for an array element. */
+  label: string;
+  leftPointer: string | null;
+  rightPointer: string | null;
+  status: TreeStatus;
+  ignoredBy: IgnoreRule | null;
+  changes: number;
+  /** Compact values, cut short; objects and arrays summarised (`{3 keys}`). */
+  old: string | null;
+  new: string | null;
+  /** For a non-empty object or array: whether it is open. */
+  expanded: boolean | null;
 }
 
 /** A pointer rule names a node as the original document has it. */

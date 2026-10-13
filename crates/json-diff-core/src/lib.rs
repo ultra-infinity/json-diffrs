@@ -7,6 +7,7 @@ pub mod format;
 pub mod ignore;
 pub mod structural;
 pub mod text;
+pub mod tree;
 
 pub use folder::{PairEntry, PairStatus, compare_folders, scan_json_files};
 pub use folds::Folds;
@@ -14,6 +15,7 @@ pub use format::{FoldMark, FoldOptions, FormattedJson, format_json, format_json_
 pub use ignore::{IgnoreRule, is_ignored, last_key};
 pub use structural::{Change, ChangeKind, PathMap, structural_diff, structural_diff_mapped};
 pub use text::{Hunk, HunkKind, LineStatus, Segment, SideBySide};
+pub use tree::{TreeOptions, TreeRow, TreeStatus};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -68,13 +70,16 @@ pub struct JsonDiff {
     pub ignored_changes: usize,
     pub left_error: Option<ParseError>,
     pub right_error: Option<ParseError>,
-    /// The parsed documents, kept so folding can re-render without
-    /// re-parsing or re-diffing. `None` in plain-text mode.
+    /// The parsed documents, kept so folding and the tree can be rebuilt
+    /// without re-parsing or re-diffing. `None` if a side is not valid JSON.
     documents: Option<Documents>,
 }
 
 #[derive(Debug, Clone)]
 struct Documents {
+    /// The line view is pretty-printed from these (Format JSON), so it can
+    /// be folded; otherwise it shows the texts as they are.
+    formatted: bool,
     left: Option<Value>,
     right: Option<Value>,
     sort_keys: bool,
@@ -135,14 +140,18 @@ pub fn diff_json_texts_ignoring(
         right_error,
         documents: None,
     };
-    if options.format && parsed_or_blank {
+    let formatted = options.format && parsed_or_blank;
+    if parsed_or_blank {
         diff.documents = Some(Documents {
+            formatted,
             left: left_value,
             right: right_value,
             sort_keys: options.sort_keys,
             paths,
             ignore: ignore.to_vec(),
         });
+    }
+    if formatted {
         diff.refold(folds);
     } else {
         diff.view = SideBySide::new(left, right, options.ignore_whitespace);
@@ -153,12 +162,18 @@ pub fn diff_json_texts_ignoring(
 impl JsonDiff {
     /// Whether the view is formatted JSON, which can be folded.
     pub fn is_foldable(&self) -> bool {
-        self.documents.is_some()
+        self.documents
+            .as_ref()
+            .is_some_and(|documents| documents.formatted)
     }
 
     /// Rebuilds the view for new fold state; cheap, as nothing is re-parsed.
     pub fn refold(&mut self, folds: &Folds) {
-        if let Some(documents) = &self.documents {
+        if let Some(documents) = self
+            .documents
+            .as_ref()
+            .filter(|documents| documents.formatted)
+        {
             self.view = render(documents, self.changes.as_deref(), folds);
         }
     }
@@ -177,6 +192,23 @@ impl JsonDiff {
             .as_ref()
             .map_or(&none, |documents| &documents.paths);
         ignored_on(std::slice::from_ref(rule), paths, left, pointer)
+    }
+
+    /// Both documents as one tree, for the tree view; `None` unless both
+    /// sides are valid JSON (and not blank).
+    pub fn tree(&self, options: &TreeOptions) -> Option<Vec<TreeRow>> {
+        let documents = self.documents.as_ref()?;
+        let (Some(left), Some(right)) = (&documents.left, &documents.right) else {
+            return None;
+        };
+        Some(tree::rows(
+            left,
+            right,
+            &documents.paths,
+            &documents.ignore,
+            documents.sort_keys,
+            options,
+        ))
     }
 
     /// Folds that show every change: all collapsed except the containers
@@ -270,7 +302,7 @@ pub(crate) fn change_ignored(change: &Change, rules: &[IgnoreRule], paths: &Path
 /// names a node as the original document has it, so a modified-side pointer
 /// is first translated through matched array elements; one with no
 /// counterpart is compared as it is.
-fn ignored_on(rules: &[IgnoreRule], paths: &PathMap, left: bool, pointer: &str) -> bool {
+pub(crate) fn ignored_on(rules: &[IgnoreRule], paths: &PathMap, left: bool, pointer: &str) -> bool {
     rules.iter().any(|rule| match rule {
         IgnoreRule::Pointer { .. } if !left => rule.matches(
             &paths

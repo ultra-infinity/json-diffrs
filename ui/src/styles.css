@@ -1051,3 +1051,153 @@ button.link {
   align-items: center;
   gap: 4px;
 }
+
+/* Tree view */
+
+:root,
+:root[data-theme="dark"] {
+  --json-key: #9cdcfe;
+  --json-index: #b5cea8;
+}
+
+:root[data-theme="light"] {
+  --json-key: #0451a5;
+  --json-index: #098658;
+}
+
+.tree {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 0 40vh;
+  background: var(--bg);
+  font-family: "JetBrains Mono", "Cascadia Code", Consolas, "DejaVu Sans Mono", monospace;
+  font-size: 13px;
+  user-select: text;
+}
+
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding-right: 12px;
+  white-space: nowrap;
+  border-left: 2px solid transparent;
+}
+
+.tree-row:hover {
+  background: var(--bg-hover);
+}
+
+.tree-row.status-added {
+  background: var(--add-line);
+  border-left-color: var(--add-border);
+}
+
+.tree-row.status-removed {
+  background: var(--del-line);
+  border-left-color: var(--del-border);
+}
+
+.tree-row.status-modified {
+  border-left-color: var(--add-border);
+}
+
+.tree-row.status-unchanged .tree-value,
+.tree-row.ignored .tree-key,
+.tree-row.ignored .tree-index {
+  color: var(--fg-weak);
+}
+
+.tree-chevron {
+  width: 18px;
+  flex: none;
+  display: inline-flex;
+  justify-content: center;
+}
+
+.tree-chevron button.icon {
+  padding: 0;
+}
+
+.tree-sign {
+  width: 10px;
+  flex: none;
+  text-align: center;
+  font-weight: 700;
+}
+
+.status-added .tree-sign {
+  color: var(--add-border);
+}
+
+.status-removed .tree-sign {
+  color: var(--del-border);
+}
+
+.status-modified .tree-sign {
+  color: var(--fg-weak);
+}
+
+.tree-key {
+  color: var(--json-key);
+}
+
+.tree-key::after,
+.tree-index::after {
+  content: ":";
+  color: var(--fg-weak);
+}
+
+.tree-index {
+  color: var(--json-index);
+}
+
+.tree-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.tree-value.old {
+  color: var(--del-border);
+}
+
+.status-modified .tree-value.old {
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--del-border) 60%, transparent);
+}
+
+.tree-value.new {
+  color: var(--add-border);
+}
+
+.tree-arrow {
+  color: var(--fg-weak);
+}
+
+.tree-count,
+.tree-tag {
+  flex: none;
+  font-family: system-ui, sans-serif;
+  font-size: 11px;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: var(--bg-input);
+  color: var(--fg-weak);
+}
+
+.tree-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: var(--bg);
+}
+
+.tree-empty p {
+  margin: 0;
+}

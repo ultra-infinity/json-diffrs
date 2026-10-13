@@ -181,7 +181,24 @@ fn default_limit() -> usize {
 
 #[derive(Deserialize, JsonSchema)]
 struct ViewModeArgs {
+    /// `diff` (lines side by side), `tree` (one tree of keys with changes
+    /// marked) or `edit` (two text editors).
     mode: ViewMode,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct TreeOptionsArgs {
+    /// List unchanged keys too, instead of only the paths to changes.
+    show_unchanged: Option<bool>,
+    /// true: open every path down to each change; false: fold everything to
+    /// the top level (how the tree starts).
+    open_changes: Option<bool>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct TreeNodeArgs {
+    /// The node's `id`, as listed by get_tree.
+    id: String,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -255,8 +272,16 @@ tools! {
         PageArgs => |a| Command::GetChanges { offset: a.offset, limit: a.limit };
     "get_text": "Return the raw text of one side's document (truncated at 100 kB).",
         SideArgs => |a| Command::GetText { side: a.side };
-    "set_view_mode": "Switch between the side-by-side diff and the two-pane editor.",
+    "set_view_mode": "Switch between the side-by-side diff, the tree view (both documents as one tree of keys, changes marked) and the two-pane editor.",
         ViewModeArgs => |a| Command::SetViewMode { mode: a.mode };
+    "set_tree_options": "Tree view: show unchanged keys too, or only the paths that lead to changes (the default); and open every path down to each change (open_changes=true, the toolbar's Reveal changes) or fold all to the top level (false, Collapse all; how the tree starts).",
+        TreeOptionsArgs => |a| Command::SetTreeOptions { show_unchanged: a.show_unchanged, open_changes: a.open_changes };
+    "expand_tree_node": "Tree view: open a node to show its children.",
+        TreeNodeArgs => |a| Command::SetTreeExpanded { id: a.id, expanded: true };
+    "collapse_tree_node": "Tree view: close a node, hiding its children.",
+        TreeNodeArgs => |a| Command::SetTreeExpanded { id: a.id, expanded: false };
+    "get_tree": "The tree view's visible rows: each key with its id, depth, status (added, removed, modified, changed = changes inside, unchanged), change count and old/new values. Works in any view mode.",
+        NoArgs => |_| Command::GetTree;
     "set_zoom": "Set the UI zoom factor.",
         ZoomArgs => |a| Command::SetZoom { zoom: a.zoom };
     "zoom_in": "Zoom in by 10%.",

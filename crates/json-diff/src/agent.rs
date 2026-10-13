@@ -30,7 +30,9 @@ like VS Code's diff editor. The left side is the original document and the right
 the modified one. A folder explorer on the left has two halves: the top half browses the \
 original folder and the bottom half the modified folder; when both are open, files with \
 the same relative path are paired and marked modified, identical, only_left or only_right.
-In the diff, as in VS Code, changed lines are red on the original side and green on the \
+The app opens on the tree view: both documents as one tree of keys, only the paths to \
+changes, folded to the top level (get_tree lists its rows). The line diff is the `diff` \
+view mode. In the diff, as in VS Code, changed lines are red on the original side and green on the \
 modified side: a red line with no counterpart was removed, a green one was added, and a \
 red block facing a green block is a value that changed in place (get_structural_changes \
 tells the three apart). Uncoloured lines inside a changed block only differ in formatting.

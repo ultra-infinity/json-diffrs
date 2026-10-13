@@ -9,7 +9,7 @@ use crate::agents_md::InstructionFile;
 use crate::state::{AppState, Side, Theme, ViewMode};
 use json_diff_core::{
     DiffOptions, FoldMark, Hunk, IgnoreRule, LineStatus, PairStatus, ParseError, SideBySide,
-    last_key,
+    TreeRow, last_key,
 };
 use serde::Serialize;
 use std::ops::Range;
@@ -24,6 +24,8 @@ pub struct View {
     pub paired: bool,
     pub docs: [DocView; 2],
     pub diff: DiffView,
+    /// The tree view, only while it is the view mode.
+    pub tree: Option<TreeView>,
     pub current_hunk: Option<usize>,
     /// A change the frontend should scroll into view, once.
     pub reveal: Option<usize>,
@@ -144,6 +146,14 @@ pub struct HunkView {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct TreeView {
+    /// `None` when a side is not valid JSON, so there is no tree.
+    pub rows: Option<Vec<TreeRow>>,
+    pub show_unchanged: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct IgnoredView {
     /// `/a/b` or `"name" everywhere`.
     pub label: String,
@@ -252,6 +262,10 @@ pub fn snapshot(state: &mut AppState) -> View {
                 })
                 .collect(),
         },
+        tree: (state.view_mode == ViewMode::Tree).then(|| TreeView {
+            rows: state.tree_rows(),
+            show_unchanged: state.tree_show_unchanged,
+        }),
         current_hunk: state.current_hunk,
         reveal,
         options: state.options,
@@ -554,6 +568,78 @@ mod tests {
         state.apply(Command::StopIgnoring { rule: None }).unwrap();
         assert_eq!(snapshot(&mut state).ignored_changes, 0);
         assert!(state.ignored_prompt_section().is_empty());
+    }
+
+    #[test]
+    fn the_tree_view_lists_changes_and_opens_on_request() {
+        let mut state = sample();
+        // The app opens on the tree.
+        let rows = snapshot(&mut state).tree.unwrap().rows.unwrap();
+        let version = rows.iter().find(|row| row.label == "version").unwrap();
+        assert_eq!(
+            (version.old.as_deref(), version.new.as_deref()),
+            (Some("\"2.3.1\""), Some("\"2.4.0\""))
+        );
+        let total: usize = rows
+            .iter()
+            .filter(|row| row.depth == 0)
+            .map(|row| row.changes)
+            .sum();
+        assert_eq!(Some(total), state.diff.changes.as_ref().map(Vec::len));
+        assert!(rows.iter().all(|row| row.label != "service"), "unchanged");
+        assert!(rows.iter().all(|row| row.depth == 0), "it starts folded");
+
+        // Open the added `tracing` object; ids are what get_tree reports.
+        state
+            .apply(Command::SetTreeExpanded {
+                id: "+/tracing".into(),
+                expanded: true,
+            })
+            .unwrap();
+        let rows = state.tree_rows().unwrap();
+        let tracing = rows.iter().position(|row| row.id == "+/tracing").unwrap();
+        assert_eq!(rows[tracing + 1].depth, 1);
+        assert!(
+            state
+                .apply(Command::SetTreeExpanded {
+                    id: "/nope".into(),
+                    expanded: true
+                })
+                .is_err()
+        );
+
+        state
+            .apply(Command::SetTreeOptions {
+                show_unchanged: Some(true),
+                open_changes: None,
+            })
+            .unwrap();
+        assert!(
+            state
+                .tree_rows()
+                .unwrap()
+                .iter()
+                .any(|row| row.label == "service")
+        );
+
+        // Reveal changes opens every path to a change.
+        state
+            .apply(Command::SetTreeOptions {
+                show_unchanged: Some(false),
+                open_changes: Some(true),
+            })
+            .unwrap();
+        let rows = state.tree_rows().unwrap();
+        let max = rows.iter().find(|row| row.label == "max").unwrap();
+        assert_eq!(max.depth, 2, "/database/pool/max");
+
+        // The line diff has no tree.
+        state
+            .apply(Command::SetViewMode {
+                mode: ViewMode::Diff,
+            })
+            .unwrap();
+        assert!(snapshot(&mut state).tree.is_none());
     }
 
     #[test]

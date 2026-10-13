@@ -11,6 +11,11 @@ show up as noise. It runs on Windows and Linux, and in the browser.
 
 ## Features
 
+- **Tree view.** json-diff opens on a tree of both documents, with only the paths to
+  changes listed: a changed value reads `old → new`, added and removed keys are green
+  and red, and each object or array shows how many changes it holds. It starts folded
+  to the top-level keys; **Reveal changes** opens every path to a change, and **Show
+  unchanged** lists everything else too.
 - **Side-by-side diff.** Changed lines are red on the original side and green on the
   modified side, with the changed characters highlighted. Ribbons connect each change
   to where it belongs on the other side. Drag the ribbon gutter to give either side
@@ -125,6 +130,9 @@ opens on the side of the window it lands on.
 | F5 | Refresh folders |
 | ↑ ↓ PageUp PageDown Ctrl+Home Ctrl+End | Move through the diff (click into it first) |
 | ← → / Shift+wheel | Scroll sideways |
+
+**Tree**, **Diff** and **Edit** at the left of the toolbar switch between the tree of
+changes (where json-diff opens), the line diff and two editors.
 
 Click the arrow beside a line number to fold or unfold a key. **Expand all**,
 **Collapse all** and **Reveal changes** in the toolbar act on the whole document.

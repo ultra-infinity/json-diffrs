@@ -23,6 +23,7 @@ import {
 } from "./api";
 import { AssistantPanel, useAssistant, type Assistant } from "./components/AssistantPanel";
 import { DiffView } from "./components/DiffView";
+import { TreeView } from "./components/TreeView";
 import { EditView } from "./components/EditView";
 import { Explorer } from "./components/Explorer";
 import { ExportDialog, ExportedBar } from "./components/ExportDialog";
@@ -121,7 +122,9 @@ export function App() {
         )}
         <main className="main">
           <Toolbar view={view} run={run} />
-          {view.viewMode === "diff" ? <DiffView view={view} run={run} /> : <EditView view={view} onView={setView} />}
+          {view.viewMode === "diff" && <DiffView view={view} run={run} />}
+          {view.viewMode === "tree" && <TreeView view={view} run={run} />}
+          {view.viewMode === "edit" && <EditView view={view} onView={setView} />}
         </main>
         {/* Hidden rather than unmounted, so the conversation survives. */}
         {!WEB && (
@@ -168,6 +171,7 @@ function menus(
     {
       title: "View",
       entries: [
+        { label: "Tree", checked: view.viewMode === "tree", action: () => run("set_view_mode", { mode: "tree" }) },
         { label: "Side-by-side Diff", checked: view.viewMode === "diff", action: () => run("set_view_mode", { mode: "diff" }) },
         { label: "Edit", checked: view.viewMode === "edit", action: () => run("set_view_mode", { mode: "edit" }) },
         ...desktop(
@@ -234,55 +238,89 @@ function Toolbar({ view, run }: { view: View; run: Run }) {
     count === 0 ? "No changes" : view.currentHunk === null ? `${count} changes` : `Change ${view.currentHunk + 1} of ${count}`;
   const toggle = (key: keyof View["options"]) => () => run("set_options", { [key]: !view.options[key] });
   const foldTip = view.foldable ? undefined : "Folding needs Format JSON on and valid JSON";
+  const tree = view.viewMode === "tree";
+  const modes: { mode: View["viewMode"]; label: string; title: string }[] = [
+    { mode: "tree", label: "Tree", title: "One tree of keys, with what changed marked" },
+    { mode: "diff", label: "Diff", title: "Both documents side by side, line by line" },
+    { mode: "edit", label: "Edit", title: "Edit or paste either document" },
+  ];
   return (
     <div className="toolbar">
       <div className="segmented">
-        <button className={view.viewMode === "diff" ? "active" : ""} onClick={() => run("set_view_mode", { mode: "diff" })}>
-          Diff
-        </button>
-        <button className={view.viewMode === "edit" ? "active" : ""} onClick={() => run("set_view_mode", { mode: "edit" })}>
-          Edit
-        </button>
+        {modes.map(({ mode, label, title }) => (
+          <button key={mode} className={view.viewMode === mode ? "active" : ""} title={title} onClick={() => run("set_view_mode", { mode })}>
+            {label}
+          </button>
+        ))}
       </div>
       <span className="divider" />
-      <button disabled={count === 0} title="Previous change (Shift+F7)" onClick={() => run("previous_change")}>
-        Previous
-      </button>
-      <button disabled={count === 0} title="Next change (F7)" onClick={() => run("next_change")}>
-        Next
-      </button>
-      <span className="position">{position}</span>
-      <span className="divider" />
-      <label title="Pretty print both sides and align lines by JSON structure">
-        <input type="checkbox" checked={view.options.format} onChange={toggle("format")} /> Format JSON
-      </label>
-      <label title="Ignore differences in key order" className={view.options.format ? "" : "disabled"}>
-        <input type="checkbox" checked={view.options.sort_keys} disabled={!view.options.format} onChange={toggle("sort_keys")} />{" "}
-        Sort keys
-      </label>
-      <label title="Only applies when Format JSON is off" className={view.options.format ? "disabled" : ""}>
-        <input
-          type="checkbox"
-          checked={view.options.ignore_whitespace}
-          disabled={view.options.format}
-          onChange={toggle("ignore_whitespace")}
-        />{" "}
-        Ignore whitespace
-      </label>
-      <span className="divider" />
-      <button title="Swap original and modified" onClick={() => run("swap_sides")}>
-        Swap sides
-      </button>
-      <span className="divider" />
-      <button disabled={!view.foldable} title={foldTip ?? "Expand every object and array"} onClick={() => run("expand_all")}>
-        Expand all
-      </button>
-      <button disabled={!view.foldable} title={foldTip ?? "Show only the top-level keys"} onClick={() => run("collapse_all")}>
-        Collapse all
-      </button>
-      <button disabled={!view.foldable} title={foldTip ?? "Expand only what leads to a change"} onClick={() => run("reveal_changes")}>
-        Reveal changes
-      </button>
+      {tree ? (
+        <>
+          <label title="List every key, not only the paths to changes">
+            <input
+              type="checkbox"
+              checked={view.tree?.showUnchanged ?? false}
+              onChange={() => run("set_tree_options", { show_unchanged: !view.tree?.showUnchanged })}
+            />{" "}
+            Show unchanged
+          </label>
+          <label title="List keys alphabetically">
+            <input type="checkbox" checked={view.options.sort_keys} onChange={toggle("sort_keys")} /> Sort keys
+          </label>
+          <span className="divider" />
+          <button title="Swap original and modified" onClick={() => run("swap_sides")}>
+            Swap sides
+          </button>
+          <span className="divider" />
+          <button title="Fold the tree to the top-level keys" onClick={() => run("set_tree_options", { open_changes: false })}>
+            Collapse all
+          </button>
+          <button title="Open every path down to each change" onClick={() => run("set_tree_options", { open_changes: true })}>
+            Reveal changes
+          </button>
+        </>
+      ) : (
+        <>
+          <button disabled={count === 0} title="Previous change (Shift+F7)" onClick={() => run("previous_change")}>
+            Previous
+          </button>
+          <button disabled={count === 0} title="Next change (F7)" onClick={() => run("next_change")}>
+            Next
+          </button>
+          <span className="position">{position}</span>
+          <span className="divider" />
+          <label title="Pretty print both sides and align lines by JSON structure">
+            <input type="checkbox" checked={view.options.format} onChange={toggle("format")} /> Format JSON
+          </label>
+          <label title="Ignore differences in key order" className={view.options.format ? "" : "disabled"}>
+            <input type="checkbox" checked={view.options.sort_keys} disabled={!view.options.format} onChange={toggle("sort_keys")} />{" "}
+            Sort keys
+          </label>
+          <label title="Only applies when Format JSON is off" className={view.options.format ? "disabled" : ""}>
+            <input
+              type="checkbox"
+              checked={view.options.ignore_whitespace}
+              disabled={view.options.format}
+              onChange={toggle("ignore_whitespace")}
+            />{" "}
+            Ignore whitespace
+          </label>
+          <span className="divider" />
+          <button title="Swap original and modified" onClick={() => run("swap_sides")}>
+            Swap sides
+          </button>
+          <span className="divider" />
+          <button disabled={!view.foldable} title={foldTip ?? "Expand every object and array"} onClick={() => run("expand_all")}>
+            Expand all
+          </button>
+          <button disabled={!view.foldable} title={foldTip ?? "Show only the top-level keys"} onClick={() => run("collapse_all")}>
+            Collapse all
+          </button>
+          <button disabled={!view.foldable} title={foldTip ?? "Expand only what leads to a change"} onClick={() => run("reveal_changes")}>
+            Reveal changes
+          </button>
+        </>
+      )}
       <IgnoredButton view={view} run={run} />
       {WEB ? (
         <>
