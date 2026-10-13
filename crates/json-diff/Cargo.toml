@@ -1,6 +1,6 @@
 [package]
 name = "json-diff"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2024"
 description = "Side-by-side JSON diff with folder comparison and an AI assistant"
 authors.workspace = true

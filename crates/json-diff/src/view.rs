@@ -7,7 +7,7 @@
 
 use crate::agents_md::InstructionFile;
 use crate::state::{AppState, Side, Theme, ViewMode};
-use json_diff_core::{DiffOptions, FoldMark, LineStatus, PairStatus, ParseError, SideBySide};
+use json_diff_core::{DiffOptions, FoldMark, Hunk, LineStatus, PairStatus, ParseError, SideBySide};
 use serde::Serialize;
 use std::ops::Range;
 use std::path::Path;
@@ -204,10 +204,10 @@ pub fn snapshot(state: &mut AppState) -> View {
             right: side_view(view, false),
             hunks: (0..view.hunks.len())
                 .map(|index| {
-                    let hunk = &view.hunks[index];
+                    let (left, right) = changed_lines(view, &view.hunks[index]);
                     HunkView {
-                        left: [hunk.left.start, hunk.left.end],
-                        right: [hunk.right.start, hunk.right.end],
+                        left: [left.start, left.end],
+                        right: [right.start, right.end],
                         left_status: view.hunk_status(index, true),
                         right_status: view.hunk_status(index, false),
                     }
@@ -248,6 +248,40 @@ pub fn snapshot(state: &mut AppState) -> View {
             state.docs[0].label(),
             state.docs[1].label()
         ),
+    }
+}
+
+/// The lines of `hunk` that changed, on each side: the hunk without the
+/// unchanged lines at its edges, such as a line that only gained a comma
+/// because a key was added after it. A side left with nothing becomes the
+/// insertion point next to its counterpart of those edge lines, so the
+/// ribbon points where the change belongs. A hunk that only reformatted
+/// lines keeps its full ranges.
+fn changed_lines(view: &SideBySide, hunk: &Hunk) -> (Range<usize>, Range<usize>) {
+    let changed = |left: bool, range: &Range<usize>| {
+        let statuses = &view.status(left)[range.clone()];
+        let first = statuses
+            .iter()
+            .position(|status| *status != LineStatus::Unchanged)?;
+        let last = statuses
+            .iter()
+            .rposition(|status| *status != LineStatus::Unchanged)?;
+        Some(range.start + first..range.start + last + 1)
+    };
+    // Where an empty side's insertion point goes: past as many of its lines
+    // as the other side skipped before its change.
+    let point = |own: &Range<usize>, other: &Range<usize>, other_changed: &Range<usize>| {
+        let at = own.start + (other_changed.start - other.start).min(own.len());
+        at..at
+    };
+    match (changed(true, &hunk.left), changed(false, &hunk.right)) {
+        (Some(left), Some(right)) => (left, right),
+        (None, Some(right)) => (point(&hunk.left, &hunk.right, &right), right),
+        (Some(left), None) => {
+            let right = point(&hunk.right, &hunk.left, &left);
+            (left, right)
+        }
+        (None, None) => (hunk.left.clone(), hunk.right.clone()),
     }
 }
 
@@ -404,6 +438,36 @@ mod tests {
                 .iter()
                 .any(|[start, end, right_start, right_end]| start == end && right_end > right_start)
         );
+    }
+
+    /// Issue #1: a key added at the end makes the line before it gain a
+    /// comma. That line is not a change, so the ribbon must not span it.
+    #[test]
+    fn ribbons_skip_lines_that_only_gained_a_comma() {
+        let mut state = AppState::default();
+        let left = r#"{"id": "USR-10482", "name": "Jane Doe", "status": "pending_verification", "role": "Analyst", "department": "Risk & Compliance", "legacySystemId": "SYS-9941"}"#;
+        let right = r#"{"id": "USR-10482", "name": "Jane Doe", "status": "active", "department": "Risk & Compliance", "legacySystemId": "SYS-9941", "lastLogin": "2025-05-18T14:32:00Z"}"#;
+        for (side, text) in [(Side::Left, left), (Side::Right, right)] {
+            state
+                .apply(Command::SetText {
+                    side,
+                    text: text.into(),
+                })
+                .unwrap();
+        }
+        let view = snapshot(&mut state);
+        let lines = |side: &SideView| side.text.lines().map(str::to_owned).collect::<Vec<_>>();
+        let (left_lines, right_lines) = (lines(&view.diff.left), lines(&view.diff.right));
+        let added = view.diff.hunks.last().unwrap();
+        // Right: just the "lastLogin" line.
+        assert_eq!(added.right[1] - added.right[0], 1);
+        assert!(right_lines[added.right[0]].contains("lastLogin"));
+        // Left: the point just below "legacySystemId", where it was added.
+        assert_eq!(added.left[0], added.left[1]);
+        assert!(left_lines[added.left[0] - 1].contains("legacySystemId"));
+        // The first change, with no formatting-only lines, is untouched.
+        let first = &view.diff.hunks[0];
+        assert_eq!((first.left, first.right), ([3, 5], [3, 4]));
     }
 
     #[test]
