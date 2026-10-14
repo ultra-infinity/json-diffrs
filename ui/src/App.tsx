@@ -171,8 +171,8 @@ function menus(
     {
       title: "View",
       entries: [
-        { label: "Tree", checked: view.viewMode === "tree", action: () => run("set_view_mode", { mode: "tree" }) },
         { label: "Side-by-side Diff", checked: view.viewMode === "diff", action: () => run("set_view_mode", { mode: "diff" }) },
+        { label: "Tree", checked: view.viewMode === "tree", action: () => run("set_view_mode", { mode: "tree" }) },
         { label: "Edit", checked: view.viewMode === "edit", action: () => run("set_view_mode", { mode: "edit" }) },
         ...desktop(
           "separator",
@@ -240,8 +240,8 @@ function Toolbar({ view, run }: { view: View; run: Run }) {
   const foldTip = view.foldable ? undefined : "Folding needs Format JSON on and valid JSON";
   const tree = view.viewMode === "tree";
   const modes: { mode: View["viewMode"]; label: string; title: string }[] = [
-    { mode: "tree", label: "Tree", title: "One tree of keys, with what changed marked" },
     { mode: "diff", label: "Diff", title: "Both documents side by side, line by line" },
+    { mode: "tree", label: "Tree", title: "An overview: one tree of keys, with what changed marked" },
     { mode: "edit", label: "Edit", title: "Edit or paste either document" },
   ];
   return (

@@ -9,6 +9,11 @@ rename it to `## <version> - <date>`; `scripts/release.sh` refuses a version
 with no entry.
 Keep entries to `-` bullets, with `**bold**` and `` `code` `` at most.
 
+## Unreleased
+
+- json-diff opens on the line diff again. The tree view stays one click away
+  under **Tree**, for an overview of what changed.
+
 ## 0.7.0 - 2026-10-13
 
 - **Tree view, now the default:** json-diff opens on **Tree**, which shows

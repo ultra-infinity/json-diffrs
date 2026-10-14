@@ -297,8 +297,9 @@ impl Default for AppState {
             folds: Folds::default(),
             current_hunk: None,
             scroll_to_current: false,
-            // The tree reads most naturally; Diff and Edit are a click away.
-            view_mode: ViewMode::Tree,
+            // The line diff; the tree (a summary of what changed) is a click
+            // away.
+            view_mode: ViewMode::Diff,
             tree_show_unchanged: false,
             tree_open_changes: false,
             tree_toggled: HashSet::new(),

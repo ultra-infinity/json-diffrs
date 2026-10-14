@@ -573,7 +573,15 @@ mod tests {
     #[test]
     fn the_tree_view_lists_changes_and_opens_on_request() {
         let mut state = sample();
-        // The app opens on the tree.
+        assert!(
+            snapshot(&mut state).tree.is_none(),
+            "the app opens on the diff"
+        );
+        state
+            .apply(Command::SetViewMode {
+                mode: ViewMode::Tree,
+            })
+            .unwrap();
         let rows = snapshot(&mut state).tree.unwrap().rows.unwrap();
         let version = rows.iter().find(|row| row.label == "version").unwrap();
         assert_eq!(
