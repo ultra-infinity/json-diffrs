@@ -50,9 +50,141 @@ in `SHA256SUMS`.
    [`ui/src/csp.ts`](../ui/src/csp.ts) and is shown in the app under **Help → Privacy &
    Security**.
 
-## AWS: S3 and CloudFront
+## AWS in the web console
 
-S3 stores the files; CloudFront adds HTTPS, your domain and caching.
+For teams that use the AWS Management Console rather than the command line. Two
+routes:
+
+- **Amplify Hosting:** the simplest. Upload one zip; AWS handles HTTPS, caching and
+  the address.
+- **S3 and CloudFront:** a few more steps, but more control: a private bucket,
+  restricting access by IP with AWS WAF, and security headers.
+
+AWS renames console buttons from time to time; if a label below differs slightly,
+look for the nearest equivalent.
+
+### Prepare the files
+
+1. Download `json-diff-web-<version>.zip` from the release and check it (see
+   [Checking the download](#checking-the-download)).
+2. Unzip it. You get a folder `json-diff-web-<version>` containing `index.html`,
+   `LICENSE.txt`, `THIRD_PARTY_NOTICES.txt` and an `assets` folder.
+
+### Route 1: Amplify Hosting
+
+1. **Make a zip with `index.html` at the top.** Amplify needs the files themselves in
+   the zip, not the folder around them. Open the `json-diff-web-<version>` folder,
+   select everything inside it, and compress the selection: on Windows, right-click →
+   *Send to* → *Compressed (zipped) folder*; on macOS, right-click → *Compress*.
+2. In the console, open **AWS Amplify** → **Create new app** → **Deploy without Git**
+   → **Next**.
+3. Enter an app name (for example `json-diff`) and a branch or environment name (for
+   example `production`), then drag your zip into the upload area and choose **Save and
+   deploy**.
+4. When the deployment shows as complete, open the domain Amplify gives you (ending in
+   `.amplifyapp.com`). The json-diff sample should appear. If the page stays empty, see
+   [Checking the deployment](#checking-the-deployment).
+5. **Your own domain (optional):** in the app, open **Hosting** → **Custom domains** →
+   **Add domain** and follow the steps. Amplify issues the certificate itself.
+6. **Restricting access (optional):** **Hosting** → **Access control** can require a
+   username and password for the whole site. For IP or single-sign-on restrictions,
+   use route 2.
+
+**Updating:** open the app, choose the deployment, and upload the next release's zip,
+prepared the same way.
+
+### Route 2: S3 and CloudFront
+
+**1. Create a private bucket.**
+
+1. Open **S3** → **Create bucket**.
+2. Enter a name (for example `example-json-diff`) and choose your region.
+3. Leave **Block all public access** ticked: only CloudFront will read the bucket.
+4. Choose **Create bucket**.
+
+**2. Upload the files.**
+
+1. Open the bucket → **Upload**.
+2. Drag in the *contents* of the `json-diff-web-<version>` folder (`index.html`,
+   `LICENSE.txt`, `THIRD_PARTY_NOTICES.txt` and the `assets` folder), not the folder
+   itself, so `index.html` ends up at the top of the bucket.
+3. Choose **Upload**, then **Close** when it finishes.
+
+**3. Check the engine's content type.** Browsers only run json-diff's engine if it is
+labelled as WebAssembly.
+
+1. In the bucket, open `assets/` and click the file ending in `.wasm`.
+2. Under **Metadata**, the `Content-Type` must be `application/wasm`.
+3. If it is anything else: select the file → **Actions** → **Edit metadata** → change
+   (or add) **System defined** `Content-Type` to `application/wasm` → **Save changes**.
+
+**4. Create a CloudFront distribution.**
+
+1. Open **CloudFront** → **Create distribution**.
+2. **Origin domain:** pick your bucket from the list (the entry ending in
+   `.s3.<region>.amazonaws.com`, not one with `s3-website` in it).
+3. **Origin access:** choose **Origin access control settings (recommended)** →
+   **Create new OAC** → **Create**.
+4. **Viewer protocol policy:** **Redirect HTTP to HTTPS**.
+5. **Web Application Firewall:** choose whether to enable security protections now;
+   you can add an IP allow-list later (step 7).
+6. **Default root object:** `index.html`.
+7. Choose **Create distribution**.
+8. A banner says the S3 bucket policy must be updated. Choose **Copy policy**, open the
+   bucket → **Permissions** → **Bucket policy** → **Edit**, paste it, and **Save
+   changes**. Without this, CloudFront cannot read the files.
+9. Wait until the distribution's **Last modified** shows a date instead of
+   *Deploying* (a few minutes), then open its **Distribution domain name** (ending in
+   `.cloudfront.net`). The json-diff sample should appear.
+
+**5. Your own domain (optional).**
+
+1. Open **Certificate Manager** and switch the region (top right) to **US East (N.
+   Virginia) us-east-1**: CloudFront only uses certificates from there.
+2. **Request** → **Request a public certificate** → enter your domain (for example
+   `json-diff.example.com`) → **DNS validation** → **Request**.
+3. Open the certificate and add the validation `CNAME` record it shows to your DNS (if
+   your domain is in Route 53, **Create records in Route 53** does it). Wait until the
+   status is **Issued**.
+4. Back in CloudFront, open the distribution → **General** → **Edit**: add the domain
+   under **Alternate domain name**, choose the certificate under **Custom SSL
+   certificate**, and **Save changes**.
+5. In your DNS, point the domain at the distribution's domain name: a `CNAME` record,
+   or in Route 53 an **Alias** record to the CloudFront distribution.
+
+**6. Security headers (optional).** The page already enforces its Content Security
+Policy itself; these add it, and HTTPS-only browsing, as HTTP headers too.
+
+1. **CloudFront** → **Policies** → **Response headers** → **Create response headers
+   policy**.
+2. Under **Security headers**, turn on **Strict Transport Security**, and **Content
+   Security Policy** with the policy from [`ui/src/csp.ts`](../ui/src/csp.ts) (also shown
+   in the app under **Help → Privacy & Security**). **Create**.
+3. Open the distribution → **Behaviors** → select the default behavior → **Edit** →
+   **Response headers policy** → choose your policy → **Save changes**.
+
+**7. Restrict access by network (optional).**
+
+1. Open **WAF & Shield** → **IP sets** → **Create IP set**, with the region set to
+   **Global (CloudFront)**, listing your office and VPN address ranges.
+2. **Web ACLs** → **Create web ACL**, resource type **Amazon CloudFront
+   distributions**, associated with your distribution. Add a rule that **allows**
+   requests from the IP set, and set the **default action** to **Block**.
+
+**Updating to a new release:**
+
+1. Upload the new release's folder contents to the bucket as in step 2. Files with the
+   same names are replaced; the old `assets` files can be deleted or left, as nothing
+   refers to them any more.
+2. Check the `.wasm` content type again (step 3).
+3. In CloudFront, open the distribution → **Invalidations** → **Create invalidation**
+   → enter `/*` → **Create invalidation**, so visitors get the new version straight
+   away.
+
+## AWS with the command line
+
+The same S3 and CloudFront setup as route 2 above, scripted with the AWS CLI. S3
+stores the files; CloudFront adds HTTPS, your domain and caching.
 
 **1. Unpack the release.**
 
@@ -111,10 +243,6 @@ aws s3 cp s3://example-json-diff/assets/ s3://example-json-diff/assets/ --recurs
   offices and VPN.
 - **By user:** put it behind your identity provider, for example with an
   authenticating proxy or Lambda@Edge in front of CloudFront.
-
-**Without the command line:** AWS Amplify Hosting can *Deploy without Git* from an
-uploaded zip. It expects `index.html` at the top of the zip, so re-zip the folder's
-contents first (`cd json-diff-web-<version> && zip -r ../site.zip .`).
 
 ## Other web servers
 

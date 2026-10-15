@@ -87,8 +87,9 @@ To update, replace the folder with the next release's. To build it from source i
 with or without Nix, see [Development](#development).
 
 For organisations, [docs/self-hosting.md](docs/self-hosting.md) covers the details: AWS
-(S3 and CloudFront), nginx, Apache and IIS settings, restricting access, and what a
-security review will want to know.
+step by step, in the web console (Amplify, or S3 and CloudFront) or with the command line;
+nginx, Apache and IIS settings; restricting access; and what a security review will want
+to know.
 
 ### Windows
 
