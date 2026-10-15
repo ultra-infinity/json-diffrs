@@ -9,12 +9,16 @@ rename it to `## <version> - <date>`; `scripts/release.sh` refuses a version
 with no entry.
 Keep entries to `-` bullets, with `**bold**` and `` `code` `` at most.
 
-## Unreleased
+## 0.9.1 - 2026-10-15
 
 - **Neutral PDF reports:** exported reports no longer name the software that
   made them. They are titled "JSON comparison report", say only when they
   were generated, and carry no creator or producer in the PDF's properties,
   so they can go into any organisation's records as they are.
+- **A guide for hosting json-diff in your organisation,** `docs/self-hosting.md`
+  in the repository: AWS step by step, in the web console or with the command
+  line, other web servers, restricting access, and what a security review will
+  want to know.
 
 ## 0.9.0 - 2026-10-15
 
