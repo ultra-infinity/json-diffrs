@@ -350,6 +350,34 @@ button.toggle.active {
   border-top: 1px solid var(--border);
 }
 
+/* Original (red) above, modified (green) below, as the diff's two sides. */
+.explorer-half {
+  border-left: 3px solid transparent;
+}
+
+.explorer-half[data-side="left"] {
+  border-left-color: var(--del-border);
+}
+
+.explorer-half[data-side="right"] {
+  border-left-color: var(--add-border);
+}
+
+.explorer-half[data-side="left"] .section-title {
+  color: var(--del-border);
+}
+
+.explorer-half[data-side="right"] .section-title {
+  color: var(--add-border);
+}
+
+.pane-hint {
+  margin-left: 6px;
+  font-size: 11px;
+  color: var(--fg-weak);
+  white-space: nowrap;
+}
+
 .explorer-header,
 .panel-header {
   display: flex;
@@ -1065,7 +1093,7 @@ button.link {
   --json-index: #098658;
 }
 
-.tree {
+.key-tree {
   flex: 1;
   min-height: 0;
   overflow: auto;
@@ -1076,7 +1104,7 @@ button.link {
   user-select: text;
 }
 
-.tree-row {
+.key-tree-row {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1086,99 +1114,99 @@ button.link {
   border-left: 2px solid transparent;
 }
 
-.tree-row:hover {
+.key-tree-row:hover {
   background: var(--bg-hover);
 }
 
-.tree-row.status-added {
+.key-tree-row.status-added {
   background: var(--add-line);
   border-left-color: var(--add-border);
 }
 
-.tree-row.status-removed {
+.key-tree-row.status-removed {
   background: var(--del-line);
   border-left-color: var(--del-border);
 }
 
-.tree-row.status-modified {
+.key-tree-row.status-modified {
   border-left-color: var(--add-border);
 }
 
-.tree-row.status-unchanged .tree-value,
-.tree-row.ignored .tree-key,
-.tree-row.ignored .tree-index {
+.key-tree-row.status-unchanged .key-tree-value,
+.key-tree-row.ignored .key-tree-key,
+.key-tree-row.ignored .key-tree-index {
   color: var(--fg-weak);
 }
 
-.tree-chevron {
+.key-tree-chevron {
   width: 18px;
   flex: none;
   display: inline-flex;
   justify-content: center;
 }
 
-.tree-chevron button.icon {
+.key-tree-chevron button.icon {
   padding: 0;
 }
 
-.tree-sign {
+.key-tree-sign {
   width: 10px;
   flex: none;
   text-align: center;
   font-weight: 700;
 }
 
-.status-added .tree-sign {
+.status-added .key-tree-sign {
   color: var(--add-border);
 }
 
-.status-removed .tree-sign {
+.status-removed .key-tree-sign {
   color: var(--del-border);
 }
 
-.status-modified .tree-sign {
+.status-modified .key-tree-sign {
   color: var(--fg-weak);
 }
 
-.tree-key {
+.key-tree-key {
   color: var(--json-key);
 }
 
-.tree-key::after,
-.tree-index::after {
+.key-tree-key::after,
+.key-tree-index::after {
   content: ":";
   color: var(--fg-weak);
 }
 
-.tree-index {
+.key-tree-index {
   color: var(--json-index);
 }
 
-.tree-value {
+.key-tree-value {
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
 }
 
-.tree-value.old {
+.key-tree-value.old {
   color: var(--del-border);
 }
 
-.status-modified .tree-value.old {
+.status-modified .key-tree-value.old {
   text-decoration: line-through;
   text-decoration-color: color-mix(in srgb, var(--del-border) 60%, transparent);
 }
 
-.tree-value.new {
+.key-tree-value.new {
   color: var(--add-border);
 }
 
-.tree-arrow {
+.key-tree-arrow {
   color: var(--fg-weak);
 }
 
-.tree-count,
-.tree-tag {
+.key-tree-count,
+.key-tree-tag {
   flex: none;
   font-family: system-ui, sans-serif;
   font-size: 11px;
@@ -1188,7 +1216,7 @@ button.link {
   color: var(--fg-weak);
 }
 
-.tree-empty {
+.key-tree-empty {
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -1198,6 +1226,12 @@ button.link {
   background: var(--bg);
 }
 
-.tree-empty p {
+.key-tree-empty p {
   margin: 0;
+}
+
+/* Reading a folder in the web app. */
+body.busy,
+body.busy * {
+  cursor: progress !important;
 }

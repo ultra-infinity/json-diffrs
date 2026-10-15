@@ -45,6 +45,16 @@ fn is_json(path: &Path) -> bool {
         .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
 }
 
+/// Whether a file at `relative` (inside a folder) would be listed by
+/// [`scan_json_files`]: a `.json` file with no hidden part in its path. For
+/// folders handed over as a list of files, as a browser does.
+pub fn is_listed_json(relative: &Path) -> bool {
+    is_json(relative)
+        && relative
+            .components()
+            .all(|part| !part.as_os_str().to_string_lossy().starts_with('.'))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PairStatus {
@@ -73,6 +83,20 @@ pub fn compare_folders(
     right_files: &[PathBuf],
     ignore: &[IgnoreRule],
 ) -> Vec<PairEntry> {
+    compare_folder_lists(left_files, right_files, ignore, |left, path| {
+        std::fs::read(if left { left_root } else { right_root }.join(path)).ok()
+    })
+}
+
+/// [`compare_folders`] for folders read some other way: `read(left, path)`
+/// returns the file at relative `path` in the original (`left`) or modified
+/// folder, or `None` if it cannot be read.
+pub fn compare_folder_lists(
+    left_files: &[PathBuf],
+    right_files: &[PathBuf],
+    ignore: &[IgnoreRule],
+    read: impl Fn(bool, &Path) -> Option<Vec<u8>>,
+) -> Vec<PairEntry> {
     let mut sides: BTreeMap<&Path, (bool, bool)> = BTreeMap::new();
     for path in left_files {
         sides.entry(path).or_default().0 = true;
@@ -87,7 +111,7 @@ pub fn compare_folders(
             let status = match sides {
                 (true, false) => PairStatus::OnlyLeft,
                 (false, true) => PairStatus::OnlyRight,
-                _ if same_content(&left_root.join(path), &right_root.join(path), ignore) => {
+                _ if same_content(read(true, path), read(false, path), ignore) => {
                     PairStatus::Identical
                 }
                 _ => PairStatus::Modified,
@@ -100,8 +124,8 @@ pub fn compare_folders(
         .collect()
 }
 
-fn same_content(left: &Path, right: &Path, ignore: &[IgnoreRule]) -> bool {
-    let (Ok(left), Ok(right)) = (std::fs::read(left), std::fs::read(right)) else {
+fn same_content(left: Option<Vec<u8>>, right: Option<Vec<u8>>, ignore: &[IgnoreRule]) -> bool {
+    let (Some(left), Some(right)) = (left, right) else {
         return false;
     };
     if left == right {
@@ -126,6 +150,45 @@ fn same_content(left: &Path, right: &Path, ignore: &[IgnoreRule]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn listed_files_are_visible_json_files() {
+        assert!(is_listed_json(Path::new("a/b.JSON")));
+        assert!(!is_listed_json(Path::new("a/b.txt")));
+        assert!(!is_listed_json(Path::new(".git/config.json")));
+        assert!(!is_listed_json(Path::new("a/.hidden.json")));
+    }
+
+    #[test]
+    fn folders_in_memory_compare_like_folders_on_disk() {
+        let files = |names: &[&str]| -> Vec<PathBuf> { names.iter().map(PathBuf::from).collect() };
+        let contents = |left: bool, path: &Path| -> Option<Vec<u8>> {
+            let text = match (left, path.to_str()?) {
+                (true, "same.json") => r#"{"a":1,"b":2}"#,
+                (false, "same.json") => r#"{"b": 2, "a": 1}"#,
+                (true, "changed.json") => "[1]",
+                (false, "changed.json") => "[2]",
+                _ => return None,
+            };
+            Some(text.as_bytes().to_vec())
+        };
+        let entries = compare_folder_lists(
+            &files(&["changed.json", "same.json", "old.json"]),
+            &files(&["changed.json", "same.json", "new.json"]),
+            &[],
+            contents,
+        );
+        let statuses: Vec<_> = entries.iter().map(|entry| entry.status).collect();
+        assert_eq!(
+            statuses,
+            [
+                PairStatus::Modified,
+                PairStatus::OnlyRight,
+                PairStatus::OnlyLeft,
+                PairStatus::Identical
+            ]
+        );
+    }
 
     #[test]
     fn files_differing_only_in_ignored_keys_are_identical() {

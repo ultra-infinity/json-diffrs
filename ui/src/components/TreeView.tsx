@@ -15,7 +15,7 @@ export function TreeView({ view, run }: { view: View; run: Run }) {
   if (!tree.rows) {
     const errors = view.docs.filter((doc) => doc.error);
     return (
-      <div className="tree-empty">
+      <div className="key-tree-empty">
         <p>The tree view needs two valid JSON documents.</p>
         {errors.map((doc) => (
           <p key={doc.label} className="weak">
@@ -29,7 +29,7 @@ export function TreeView({ view, run }: { view: View; run: Run }) {
 
   if (tree.rows.length === 0) {
     return (
-      <div className="tree-empty">
+      <div className="key-tree-empty">
         <p>{view.ignoredChanges > 0 ? "No changes, apart from ignored keys." : "No changes: the documents are the same."}</p>
         {!tree.showUnchanged && (
           <button onClick={() => run("set_tree_options", { show_unchanged: true })}>Show the whole document</button>
@@ -58,34 +58,34 @@ export function TreeView({ view, run }: { view: View; run: Run }) {
   };
 
   return (
-    <div className="tree" role="tree">
+    <div className="key-tree" role="tree">
       {tree.rows.map((row) => (
         <div
           key={row.id}
           role="treeitem"
           aria-expanded={row.expanded ?? undefined}
-          className={`tree-row status-${row.status}${row.ignoredBy ? " ignored" : ""}`}
+          className={`key-tree-row status-${row.status}${row.ignoredBy ? " ignored" : ""}`}
           style={{ paddingLeft: 8 + row.depth * 18 }}
           title={row.rightPointer ?? row.leftPointer ?? undefined}
           onContextMenu={(event) => contextMenu(event, row)}
           onDoubleClick={() => row.expanded !== null && void toggle(row)}
         >
-          <span className="tree-chevron">
+          <span className="key-tree-chevron">
             {row.expanded !== null && (
               <button className="icon" title={row.expanded ? "Collapse" : "Expand"} onClick={() => void toggle(row)}>
                 <span className={`codicon codicon-chevron-${row.expanded ? "down" : "right"}`} />
               </button>
             )}
           </span>
-          <span className="tree-sign">{SIGNS[row.status]}</span>
-          <span className={row.label.startsWith("[") ? "tree-index" : "tree-key"}>{row.label}</span>
+          <span className="key-tree-sign">{SIGNS[row.status]}</span>
+          <span className={row.label.startsWith("[") ? "key-tree-index" : "key-tree-key"}>{row.label}</span>
           <Values row={row} />
           {row.status === "changed" && (
-            <span className="tree-count">
+            <span className="key-tree-count">
               {row.changes} {row.changes === 1 ? "change" : "changes"}
             </span>
           )}
-          {row.ignoredBy && <span className="tree-tag">ignored</span>}
+          {row.ignoredBy && <span className="key-tree-tag">ignored</span>}
         </div>
       ))}
       {menu && <ContextMenu {...menu} onClose={() => setMenu(null)} />}
@@ -105,23 +105,23 @@ const SIGNS: Record<TreeRow["status"], string> = {
 function Values({ row }: { row: TreeRow }) {
   switch (row.status) {
     case "added":
-      return <span className="tree-value new">{row.new}</span>;
+      return <span className="key-tree-value new">{row.new}</span>;
     case "removed":
-      return <span className="tree-value old">{row.old}</span>;
+      return <span className="key-tree-value old">{row.old}</span>;
     case "modified":
       return (
         <>
-          <span className="tree-value old" title={row.old ?? undefined}>
+          <span className="key-tree-value old" title={row.old ?? undefined}>
             {row.old}
           </span>
-          <span className="tree-arrow">→</span>
-          <span className="tree-value new" title={row.new ?? undefined}>
+          <span className="key-tree-arrow">→</span>
+          <span className="key-tree-value new" title={row.new ?? undefined}>
             {row.new}
           </span>
         </>
       );
     default:
-      return <span className="tree-value">{row.new ?? row.old}</span>;
+      return <span className="key-tree-value">{row.new ?? row.old}</span>;
   }
 }
 

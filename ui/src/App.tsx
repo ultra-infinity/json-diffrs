@@ -115,7 +115,7 @@ export function App() {
       <UpdateBanner updates={updates} onNotes={showUpdateNotes} />
       {exported && <ExportedBar exported={exported} onClose={() => setExported(null)} />}
       <div className="workspace">
-        {view.showExplorer && !WEB && (
+        {view.showExplorer && (
           <Resizable side="left" setting="explorerWidth" initial={260} min={160} max={600}>
             <Explorer ref={explorer} view={view} run={run} />
           </Resizable>
@@ -150,14 +150,14 @@ function menus(
   const sides: Side[] = ["left", "right"];
   const title = (side: Side) => (side === "left" ? "Original" : "Modified");
   const option = (key: keyof View["options"]) => () => run("set_options", { [key]: !view.options[key] });
-  /** Leaves out what the web app can't do: folders, the assistant, the
-   *  window, zoom (the browser's own does it) and updates. */
+  /** Leaves out what the web app can't do: rescanning folders, the
+   *  assistant, the window, zoom (the browser's own does it) and updates. */
   const desktop = (...entries: MenuEntry[]): MenuEntry[] => (WEB ? [] : entries);
   return [
     {
       title: "File",
       entries: [
-        ...desktop(...sides.map((side) => ({ label: `Open ${title(side)} Folder…`, action: () => pickFolder(run, side) }))),
+        ...sides.map((side) => ({ label: `Open ${title(side)} Folder…`, action: () => pickFolder(run, side) })),
         ...sides.map((side) => ({ label: `Open ${title(side)} File…`, action: () => pickFile(run, side) })),
         "separator",
         { label: "Export as PDF…", action: dialogs.exportPdf },
@@ -174,11 +174,9 @@ function menus(
         { label: "Side-by-side Diff", checked: view.viewMode === "diff", action: () => run("set_view_mode", { mode: "diff" }) },
         { label: "Tree", checked: view.viewMode === "tree", action: () => run("set_view_mode", { mode: "tree" }) },
         { label: "Edit", checked: view.viewMode === "edit", action: () => run("set_view_mode", { mode: "edit" }) },
-        ...desktop(
-          "separator",
-          { label: "Explorer", checked: view.showExplorer, action: () => run("set_panel_visible", { panel: "explorer" }) },
-          { label: "Assistant", checked: view.showAgent, action: () => run("set_panel_visible", { panel: "agent" }) },
-        ),
+        "separator",
+        { label: "Explorer", checked: view.showExplorer, action: () => run("set_panel_visible", { panel: "explorer" }) },
+        ...desktop({ label: "Assistant", checked: view.showAgent, action: () => run("set_panel_visible", { panel: "agent" }) }),
         "separator",
         { label: "Expand All", disabled: !view.foldable, action: () => run("expand_all") },
         { label: "Collapse All", disabled: !view.foldable, action: () => run("collapse_all") },
@@ -322,19 +320,7 @@ function Toolbar({ view, run }: { view: View; run: Run }) {
         </>
       )}
       <IgnoredButton view={view} run={run} />
-      {WEB ? (
-        <>
-          <span className="divider" />
-          <button title="Open the original file…" onClick={() => pickFile(run, "left")}>
-            Open original…
-          </button>
-          <button title="Open the modified file…" onClick={() => pickFile(run, "right")}>
-            Open modified…
-          </button>
-        </>
-      ) : (
-        <PanelToggles view={view} run={run} />
-      )}
+      <PanelToggles view={view} run={run} />
     </div>
   );
 }
@@ -347,9 +333,11 @@ function PanelToggles({ view, run }: { view: View; run: Run }) {
       <button className={`toggle${view.showExplorer ? " active" : ""}`} title="Toggle the folder explorer" onClick={() => run("set_panel_visible", { panel: "explorer" })}>
         Explorer
       </button>
-      <button className={`toggle${view.showAgent ? " active" : ""}`} title="Toggle the assistant panel" onClick={() => run("set_panel_visible", { panel: "agent" })}>
-        Assistant
-      </button>
+      {!WEB && (
+        <button className={`toggle${view.showAgent ? " active" : ""}`} title="Toggle the assistant panel" onClick={() => run("set_panel_visible", { panel: "agent" })}>
+          Assistant
+        </button>
+      )}
     </>
   );
 }

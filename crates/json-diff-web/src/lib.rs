@@ -2,9 +2,9 @@
 //! a small JavaScript interface: the frontend calls these methods where the
 //! desktop app makes Tauri calls (see `ui/src/backend/web.ts`).
 //!
-//! Values cross the boundary as JSON strings. The web app has no folders,
-//! assistant or updater: files arrive as text from the browser, settings are
-//! kept in its storage, and PDFs are handed back as bytes to download.
+//! Values cross the boundary as JSON strings. The web app has no assistant
+//! or updater: files and folders arrive as text from the browser, settings
+//! are kept in its storage, and PDFs are handed back as bytes to download.
 
 use json_diff_app::changelog::{self, Release};
 use json_diff_app::layout::Paper;
@@ -76,12 +76,11 @@ impl App {
         let settings = saved.unwrap_or_default();
         let mut state = AppState::default();
         settings.apply_to(&mut state);
-        // Neither panel exists here.
-        state.show_explorer = false;
+        // There is no assistant here.
         state.show_agent = false;
         samples::show(
             &mut state,
-            "Showing a sample. Open or drop two JSON files to compare your own.",
+            "Showing a sample. Open or drop JSON files or folders to compare your own.",
         );
         App {
             state,
@@ -123,6 +122,16 @@ impl App {
     /// A file picked or dropped: `name` labels the side.
     pub fn open_text(&mut self, side: &str, name: &str, text: String) -> Result<String, String> {
         self.state.open_text(parse_side(side)?, name, text);
+        Ok(self.view())
+    }
+
+    /// A folder picked or dropped: `files` is JSON, `[[relative path, text],
+    /// …]`, and `name` stands for the folder.
+    pub fn open_folder(&mut self, side: &str, name: &str, files: &str) -> Result<String, String> {
+        let files: Vec<(std::path::PathBuf, String)> =
+            serde_json::from_str(files).map_err(|error| error.to_string())?;
+        self.state
+            .open_folder_contents(parse_side(side)?, name, files);
         Ok(self.view())
     }
 
@@ -214,10 +223,29 @@ mod tests {
     fn a_fresh_browser_sees_the_sample_and_no_news() {
         let mut app = App::new(None);
         let snapshot = view(&app.view());
-        assert_eq!(snapshot["showExplorer"], false);
+        assert_eq!(snapshot["showExplorer"], true);
         assert_eq!(snapshot["showAgent"], false);
         assert!(snapshot["diff"]["hunks"].as_array().unwrap().len() > 1);
         assert_eq!(app.whats_new(), "[]");
+    }
+
+    #[test]
+    fn folders_arrive_as_lists_of_files() {
+        let mut app = App::new(None);
+        app.open_folder("left", "v1", r#"[["a/x.json", "{\"v\": 1}"]]"#)
+            .unwrap();
+        let opened = view(
+            &app.open_folder("right", "v2", r#"[["a/x.json", "{\"v\": 2}"]]"#)
+                .unwrap(),
+        );
+        assert_eq!(opened["folders"][1]["name"], "v2");
+        assert_eq!(opened["folders"][1]["files"][0]["status"], "modified");
+        let output = view(
+            &app.run("select_file", r#"{"side": "left", "path": "a/x.json"}"#)
+                .unwrap(),
+        );
+        assert_eq!(output["error"], Value::Null);
+        assert_eq!(output["view"]["docs"][0]["label"], "x.json");
     }
 
     #[test]

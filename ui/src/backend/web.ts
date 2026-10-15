@@ -1,11 +1,13 @@
 // The web app's backend: the same Rust app state, compiled to WebAssembly
-// (crates/json-diff-web) and running in the page. There are no folders,
-// assistant or updater; files come from the file picker or a drop, settings
-// live in the browser's storage, and PDFs download.
+// (crates/json-diff-web) and running in the page. There is no assistant or
+// updater; files and folders come from the browser's pickers or a drop and
+// are read in the page (see folders.ts), settings live in the browser's
+// storage, and PDFs download.
 
 import init, { App } from "#wasm";
 import type { Backend, ExportOutput, KeyAt, Release, RunOutput, View } from "../api";
 import type { UiSettings } from "../uiSettings";
+import { chooseFolder, readDroppedFolder, readTexts, type PickedFolder } from "./folders";
 
 /** Where the settings are kept, in this browser only. */
 const STORAGE_KEY = "json-diff.settings";
@@ -57,6 +59,17 @@ async function openFile(run: Parameters<Backend["pickFile"]>[0], side: string, f
   await run("open_file", { side, name: file.name, text: await file.text() });
 }
 
+/** Opens a picked or dropped folder on `side`, once its files are read. */
+async function openFolder(run: Parameters<Backend["pickFile"]>[0], side: string, folder: PickedFolder) {
+  document.body.classList.add("busy");
+  try {
+    const files = await readTexts(folder.entries);
+    await run("open_folder_files", { side, name: folder.name, files });
+  } finally {
+    document.body.classList.remove("busy");
+  }
+}
+
 /** Saves `bytes` as a download named `name`. */
 function download(bytes: Uint8Array, name: string) {
   const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: "application/pdf" }));
@@ -81,6 +94,11 @@ const backend: Backend = {
         const opened = view(app.open_text(String(args.side), String(args.name), String(args.text)));
         return { result: null, error: null, view: opened } satisfies RunOutput;
       }
+      if (name === "open_folder_files") {
+        const files = JSON.stringify(args.files);
+        const opened = view(app.open_folder(String(args.side), String(args.name), files));
+        return { result: null, error: null, view: opened } satisfies RunOutput;
+      }
       try {
         return JSON.parse(app.run(name, JSON.stringify(args))) as RunOutput;
       } catch (error) {
@@ -95,12 +113,29 @@ const backend: Backend = {
     const file = await chooseFile();
     if (file) await openFile(run, side, file);
   },
-  pickFolder: unsupported("Comparing folders"),
+  pickFolder: async (run, side) => {
+    const folder = await chooseFolder();
+    if (folder) await openFolder(run, side, folder);
+  },
 
   onDrop: (sideAt, run) => {
     const over = (event: DragEvent) => event.preventDefault();
     const drop = (event: DragEvent) => {
       event.preventDefault();
+      // Entries must be taken during the event; they are read afterwards.
+      const folders = [...(event.dataTransfer?.items ?? [])]
+        .map((item) => item.webkitGetAsEntry?.())
+        .filter((entry): entry is FileSystemDirectoryEntry => !!entry?.isDirectory);
+      if (folders.length > 0) {
+        // Two folders fill both halves; one goes where it was dropped.
+        const sides = folders.length >= 2 ? ["left", "right"] : [sideAt(event.clientX, event.clientY)];
+        void (async () => {
+          for (const [index, side] of sides.entries()) {
+            await openFolder(run, side, await readDroppedFolder(folders[index]));
+          }
+        })();
+        return;
+      }
       const files = [...(event.dataTransfer?.files ?? [])];
       if (files.length >= 2) {
         void openFile(run, "left", files[0]).then(() => openFile(run, "right", files[1]));

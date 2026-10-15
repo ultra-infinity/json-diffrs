@@ -248,7 +248,7 @@ tools! {
         SideArgs => |a| Command::ListFiles { side: a.side };
     "list_pairs": "When both folders are open, list every relative path with its status: modified, identical, only_left or only_right.",
         NoArgs => |_| Command::ListPairs;
-    "select_file": "Show a file on one side of the diff, like clicking it in that side's explorer.",
+    "select_file": "Show a file on one side of the diff, like clicking it in that side's explorer. The other side keeps its file, so any original file can be compared with any modified one.",
         FileArgs => |a| Command::SelectFile { side: a.side, path: a.path };
     "open_pair": "Compare the files at the same relative path in both folders. A file missing on one side is shown as fully added or removed.",
         PairArgs => |a| Command::OpenPair { path: a.path };

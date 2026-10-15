@@ -9,6 +9,22 @@ rename it to `## <version> - <date>`; `scripts/release.sh` refuses a version
 with no entry.
 Keep entries to `-` bullets, with `**bold**` and `` `code` `` at most.
 
+## 0.8.0 - 2026-10-15
+
+- **Folders on the web:** the web app can now compare folders. Pick one with
+  **Open Folder** in each half of the explorer, or drop folders on the page;
+  the files are read in the page and never leave your computer. Pick a folder
+  again to see changes made to it since.
+- **Compare any two files across folders:** with both folders open, a click
+  now puts the file in its own pane only, so any original file can be
+  compared with any modified one, whatever their names. Comparing a file with
+  its same-named twin moved to right-click.
+- The explorer's two folders are colour-coded like the diff's sides: red for
+  **Original** (opens in the left pane) and green for **Modified** (the right
+  pane).
+- Fixed: since 0.7.0 the tree view's styles also applied to the explorer's
+  file list, giving it a monospaced font and a large empty space at the end.
+
 ## 0.7.1 - 2026-10-14
 
 - json-diff opens on the line diff again, and the toolbar reads **Diff |

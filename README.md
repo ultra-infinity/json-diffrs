@@ -31,9 +31,11 @@ show up as noise. It runs on Windows and Linux, and in the browser.
   the change count, the assistant's answers and PDF reports, and folders whose files
   differ only in ignored keys count as identical. The **N ignored** button in the
   toolbar lists them and counts them again. They are remembered between runs.
-- **Folder comparison.** Open two folders, original and modified, in the split
-  explorer. Files with the same relative path are paired and marked modified (M), only
-  in the original (D) or only in the modified folder (A).
+- **Folder comparison.** Open two folders in the split explorer: the original (red, top)
+  feeds the left pane and the modified (green, bottom) the right. Click any file in each
+  to compare them, whatever their names. Files with the same relative path are marked
+  modified (M), only in the original (D) or only in the modified folder (A), and
+  right-click → **Compare with the same file in the other folder** opens such a pair.
 - **Options.** Format JSON, sort keys, ignore whitespace, swap sides, and an edit mode
   for pasting or editing text.
 - **AI assistant (optional).** Ask what changed, or have it drive the app: open
@@ -47,13 +49,13 @@ show up as noise. It runs on Windows and Linux, and in the browser.
 ### In your browser
 
 Open **[ultra-infinity.github.io/json-diffrs](https://ultra-infinity.github.io/json-diffrs/)**:
-nothing to install. Open two files with **Open original…** and **Open modified…**, or
-drop them on the page. The comparison runs inside the page, so your files never leave
-your computer.
+nothing to install. Open a folder or file in each half of the explorer, or drop them on
+the page. The comparison runs inside the page, so your files never leave your computer,
+even though browsers word the folder prompt as "upload".
 
-The web app has the same diff, folding, ignored keys and PDF export, which downloads
-the report. It compares single files only, not folders, and has no assistant. Your
-settings and ignored keys are kept in that browser.
+The web app has the same diff, tree view, folder comparison, ignored keys and PDF export,
+which downloads the report. It has no assistant, and it cannot rescan a folder: pick it
+again after its files change. Your settings and ignored keys are kept in that browser.
 
 ### Windows
 

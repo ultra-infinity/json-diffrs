@@ -2,7 +2,7 @@
 // open, files are paired by relative path and badged M / D / A.
 
 import { forwardRef, useMemo, useState, type ReactNode } from "react";
-import { pickFile, pickFolder, sideName, type FileView, type FolderView, type Run, type Side, type View } from "../api";
+import { WEB, pickFile, pickFolder, sideName, type FileView, type FolderView, type Run, type Side, type View } from "../api";
 import { badgeOf, buildTree, type Directory } from "../tree";
 import { ContextMenu, type MenuItem } from "./Menu";
 
@@ -28,6 +28,9 @@ function Half({ view, run, side }: { view: View; run: Run; side: Side }) {
     <section className="explorer-half" data-side={side}>
       <header className="explorer-header">
         <span className="section-title">{sideName(side)}</span>
+        <span className="pane-hint" title={`Files from this folder open in the ${side} pane`}>
+          → {side} pane
+        </span>
         <span className="spacer" />
         <button className="icon" title="Open a folder…" onClick={() => pickFolder(run, side)}>
           <span className="codicon codicon-folder-opened" />
@@ -37,9 +40,12 @@ function Half({ view, run, side }: { view: View; run: Run; side: Side }) {
         </button>
         {folder && (
           <>
-            <button className="icon" title="Rescan folders (F5)" onClick={() => run("refresh")}>
-              <span className="codicon codicon-refresh" />
-            </button>
+            {/* A web page cannot rescan a folder: pick it again instead. */}
+            {!WEB && (
+              <button className="icon" title="Rescan folders (F5)" onClick={() => run("refresh")}>
+                <span className="codicon codicon-refresh" />
+              </button>
+            )}
             <button className="icon" title="Close folder" onClick={() => run("close_folder", { side })}>
               <span className="codicon codicon-close" />
             </button>
@@ -47,29 +53,33 @@ function Half({ view, run, side }: { view: View; run: Run; side: Side }) {
         )}
       </header>
       {folder ? (
-        <Tree folder={folder} side={side} view={view} run={run} />
+        <Tree folder={folder} side={side} run={run} />
       ) : (
         <div className="explorer-empty">
           <p className="weak">No folder opened</p>
           <button onClick={() => pickFolder(run, side)}>Open Folder</button>
-          <input
-            placeholder="or type a path and press Enter"
-            value={typed}
-            onChange={(event) => setTyped(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && typed.trim()) {
-                void run("open_folder", { side, path: typed.trim() });
-              }
-            }}
-          />
-          <p className="weak small-text">You can also drop a folder here.</p>
+          {WEB ? (
+            <button onClick={() => pickFile(run, side)}>Open File</button>
+          ) : (
+            <input
+              placeholder="or type a path and press Enter"
+              value={typed}
+              onChange={(event) => setTyped(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && typed.trim()) {
+                  void run("open_folder", { side, path: typed.trim() });
+                }
+              }}
+            />
+          )}
+          <p className="weak small-text">You can also drop a {WEB ? "folder or file" : "folder"} here.</p>
         </div>
       )}
     </section>
   );
 }
 
-function Tree({ folder, side, view, run }: { folder: FolderView; side: Side; view: View; run: Run }) {
+function Tree({ folder, side, run }: { folder: FolderView; side: Side; run: Run }) {
   const tree = useMemo(() => buildTree(folder.files), [folder.files]);
   const [closed, setClosed] = useState<Set<string>>(() => new Set());
   const [opened, setOpened] = useState<Set<string>>(() => new Set());
@@ -88,8 +98,10 @@ function Tree({ folder, side, view, run }: { folder: FolderView; side: Side; vie
     setOpened((set) => update(set, !wasOpen));
     setClosed((set) => update(set, wasOpen));
   };
-  const openFile = (file: FileView) =>
-    view.paired ? run("open_pair", { path: file.path }) : run("select_file", { side, path: file.path });
+  // A click fills this half's pane only, so any original file can be
+  // compared with any modified one; same-named files are a right-click away.
+  const openFile = (file: FileView) => run("select_file", { side, path: file.path });
+  const hasTwin = (file: FileView) => file.status === "modified" || file.status === "identical";
 
   const renderDirectory = (directory: Directory, depth: number): ReactNode => (
     <>
@@ -115,18 +127,19 @@ function Tree({ folder, side, view, run }: { folder: FolderView; side: Side; vie
             key={file.path}
             className={`tree-row file${file.selected ? " selected" : ""}${badge ? ` status-${badge.toLowerCase()}` : ""}`}
             style={{ paddingLeft: 22 + depth * 12 }}
-            title={view.paired ? `${file.path}\nClick: compare with the other folder` : file.path}
+            title={`${file.path}\nClick: open in the ${side} pane`}
             onClick={() => void openFile(file)}
             onContextMenu={(event) => {
               event.preventDefault();
-              const items: MenuItem[] = [];
-              if (view.paired) {
-                items.push({ label: "Compare with other folder", action: () => run("open_pair", { path: file.path }) });
+              const items: MenuItem[] = [
+                { label: `Open in the ${side} pane`, action: () => run("select_file", { side, path: file.path }) },
+              ];
+              if (hasTwin(file)) {
+                items.push({
+                  label: "Compare with the same file in the other folder",
+                  action: () => run("open_pair", { path: file.path }),
+                });
               }
-              items.push({
-                label: `Show as ${sideName(side)} only`,
-                action: () => run("select_file", { side, path: file.path }),
-              });
               setMenu({ x: event.clientX, y: event.clientY, items });
             }}
           >

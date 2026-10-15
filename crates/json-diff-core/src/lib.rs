@@ -9,7 +9,9 @@ pub mod structural;
 pub mod text;
 pub mod tree;
 
-pub use folder::{PairEntry, PairStatus, compare_folders, scan_json_files};
+pub use folder::{
+    PairEntry, PairStatus, compare_folder_lists, compare_folders, is_listed_json, scan_json_files,
+};
 pub use folds::Folds;
 pub use format::{FoldMark, FoldOptions, FormattedJson, format_json, format_json_folded};
 pub use ignore::{IgnoreRule, is_ignored, last_key};

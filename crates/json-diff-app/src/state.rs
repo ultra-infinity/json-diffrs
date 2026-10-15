@@ -10,12 +10,13 @@ use crate::layout::Paper;
 use crate::pdf;
 use json_diff_core::{
     DiffOptions, Folds, IgnoreRule, JsonDiff, PairEntry, PairStatus, TreeOptions, TreeRow,
-    compare_folders, diff_json_texts_ignoring, scan_json_files,
+    compare_folder_lists, compare_folders, diff_json_texts_ignoring, is_listed_json,
+    scan_json_files,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 /// Files larger than this are refused rather than freezing the UI.
@@ -226,6 +227,20 @@ pub struct FolderState {
     pub root: PathBuf,
     /// Relative to `root`.
     pub files: Vec<PathBuf>,
+    /// The files' texts, for a folder handed over whole (the web app's
+    /// folder picker or a dropped folder), by path relative to `root`.
+    /// `None` for a folder on disk, read as needed.
+    pub contents: Option<HashMap<PathBuf, String>>,
+}
+
+impl FolderState {
+    /// The text of the file at `path` (absolute, or as `root` joined with a
+    /// relative path) if this folder holds it in memory: `None` for a folder
+    /// on disk or a path outside it.
+    fn text(&self, path: &Path) -> Option<&String> {
+        let contents = self.contents.as_ref()?;
+        contents.get(path.strip_prefix(&self.root).ok()?)
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -372,7 +387,11 @@ impl AppState {
                     false,
                 );
                 let result = json!({ "root": root, "json_files": files.len() });
-                self.folders[side.index()] = Some(FolderState { root, files });
+                self.folders[side.index()] = Some(FolderState {
+                    root,
+                    files,
+                    contents: None,
+                });
                 self.update_pairs();
                 Ok(result)
             }
@@ -383,7 +402,10 @@ impl AppState {
             }
             Command::RefreshFolders => {
                 for side in Side::BOTH {
-                    if let Some(folder) = &mut self.folders[side.index()] {
+                    // A folder held in memory is as it was handed over.
+                    if let Some(folder) = &mut self.folders[side.index()]
+                        && folder.contents.is_none()
+                    {
                         folder.files = scan_json_files(&folder.root).map_err(|error| {
                             format!("cannot read {}: {error}", folder.root.display())
                         })?;
@@ -409,11 +431,19 @@ impl AppState {
                     return Err("open_pair needs both an original and a modified folder".into());
                 };
                 let paths = [left.root.join(&path), right.root.join(&path)];
-                if !paths.iter().any(|path| path.is_file()) {
+                let exists = |side: Side, full: &Path| match &self.folders[side.index()] {
+                    Some(folder) if folder.contents.is_some() => folder.text(full).is_some(),
+                    _ => full.is_file(),
+                };
+                let present = [
+                    exists(Side::Left, &paths[0]),
+                    exists(Side::Right, &paths[1]),
+                ];
+                if present == [false, false] {
                     return Err(format!("{} exists in neither folder", path.display()));
                 }
-                for (side, path) in Side::BOTH.into_iter().zip(paths) {
-                    if path.is_file() {
+                for ((side, path), present) in Side::BOTH.into_iter().zip(paths).zip(present) {
+                    if present {
                         self.load(side, &path)?;
                     } else {
                         self.docs[side.index()] = Document::default();
@@ -788,6 +818,30 @@ impl AppState {
         self.clamp_current(reset_position);
     }
 
+    /// A folder handed over whole, as `(relative path, text)` pairs (the web
+    /// app's folder picker, or a dropped folder): `name` stands for its root.
+    /// Only visible `.json` files are kept, as when scanning a folder.
+    pub fn open_folder_contents(&mut self, side: Side, name: &str, files: Vec<(PathBuf, String)>) {
+        let mut contents: HashMap<PathBuf, String> = files
+            .into_iter()
+            .filter(|(path, _)| is_listed_json(path))
+            .collect();
+        let mut listed: Vec<PathBuf> = contents.keys().cloned().collect();
+        listed.sort();
+        listed.truncate(json_diff_core::folder::MAX_FILES);
+        contents.retain(|path, _| listed.binary_search(path).is_ok());
+        self.set_status(
+            format!("{}: {} JSON files in {name}", side.title(), listed.len()),
+            false,
+        );
+        self.folders[side.index()] = Some(FolderState {
+            root: PathBuf::from(name),
+            files: listed,
+            contents: Some(contents),
+        });
+        self.update_pairs();
+    }
+
     /// A file handed over as text, without a path to read it from again
     /// (the web app's file picker or a dropped file): `name` labels the side.
     pub fn open_text(&mut self, side: Side, name: &str, text: String) {
@@ -875,6 +929,17 @@ impl AppState {
     }
 
     fn load(&mut self, side: Side, path: &Path) -> Result<(), String> {
+        let held = self.folders[side.index()]
+            .as_ref()
+            .and_then(|folder| folder.text(path))
+            .cloned();
+        if let Some(text) = held {
+            self.docs[side.index()] = Document {
+                path: Some(path.to_path_buf()),
+                text,
+            };
+            return Ok(());
+        }
         let metadata = std::fs::metadata(path)
             .map_err(|error| format!("cannot open {}: {error}", path.display()))?;
         if metadata.len() > MAX_FILE_BYTES {
@@ -896,13 +961,25 @@ impl AppState {
 
     fn update_pairs(&mut self) {
         self.pairs = match (&self.folders[0], &self.folders[1]) {
-            (Some(left), Some(right)) => compare_folders(
-                &left.root,
-                &left.files,
-                &right.root,
-                &right.files,
-                &self.ignored,
-            ),
+            (Some(left), Some(right)) if left.contents.is_none() && right.contents.is_none() => {
+                compare_folders(
+                    &left.root,
+                    &left.files,
+                    &right.root,
+                    &right.files,
+                    &self.ignored,
+                )
+            }
+            (Some(left), Some(right)) => {
+                compare_folder_lists(&left.files, &right.files, &self.ignored, |is_left, path| {
+                    let folder = if is_left { left } else { right };
+                    let full = folder.root.join(path);
+                    match &folder.contents {
+                        Some(_) => folder.text(&full).map(|text| text.clone().into_bytes()),
+                        None => std::fs::read(full).ok(),
+                    }
+                })
+            }
             _ => Vec::new(),
         };
     }
@@ -1266,5 +1343,66 @@ mod tests {
             .unwrap();
         assert_eq!(state.agents_md.prompt_section(), "");
         assert!(state.apply(Command::RemoveAgentsMd { path }).is_err());
+    }
+
+    #[test]
+    fn folders_handed_over_whole_pair_and_open_like_folders_on_disk() {
+        let mut state = AppState::default();
+        let files = |entries: &[(&str, &str)]| -> Vec<(PathBuf, String)> {
+            entries
+                .iter()
+                .map(|(path, text)| (PathBuf::from(path), text.to_string()))
+                .collect()
+        };
+        state.open_folder_contents(
+            Side::Left,
+            "v1",
+            files(&[
+                ("app.json", r#"{"v": 1}"#),
+                ("old.json", "{}"),
+                ("notes.txt", "skipped"),
+                (".git/x.json", "{}"),
+            ]),
+        );
+        state.open_folder_contents(
+            Side::Right,
+            "v2",
+            files(&[("app.json", r#"{"v": 2}"#), ("new.json", "[]")]),
+        );
+        assert_eq!(
+            state.folders[0].as_ref().unwrap().files.len(),
+            2,
+            "only visible JSON"
+        );
+        let statuses: Vec<_> = state.pairs.iter().map(|pair| pair.status).collect();
+        assert_eq!(
+            statuses,
+            [
+                PairStatus::Modified,
+                PairStatus::OnlyRight,
+                PairStatus::OnlyLeft
+            ]
+        );
+
+        // Any original file against any modified one.
+        for (side, path) in [(Side::Left, "old.json"), (Side::Right, "new.json")] {
+            let path = path.into();
+            state.apply(Command::SelectFile { side, path }).unwrap();
+        }
+        assert_eq!(state.docs[0].label(), "old.json");
+        assert_eq!(state.docs[1].text, "[]");
+        assert!(state.is_selected(Side::Right, Path::new("new.json")));
+
+        state
+            .apply(Command::OpenPair {
+                path: "app.json".into(),
+            })
+            .unwrap();
+        assert_eq!(state.diff.changes.as_ref().map(Vec::len), Some(1));
+        state.apply(Command::RefreshFolders).unwrap();
+        assert_eq!(
+            state.docs[1].text, r#"{"v": 2}"#,
+            "kept, not re-read from disk"
+        );
     }
 }
