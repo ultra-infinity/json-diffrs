@@ -86,6 +86,10 @@ license (`LICENSE.txt`) and the licenses of every library json-diff includes
 To update, replace the folder with the next release's. To build it from source instead,
 with or without Nix, see [Development](#development).
 
+For organisations, [docs/self-hosting.md](docs/self-hosting.md) covers the details: AWS
+(S3 and CloudFront), nginx, Apache and IIS settings, restricting access, and what a
+security review will want to know.
+
 ### Windows
 
 Download `json-diff-<version>-x86_64.msi` from the
