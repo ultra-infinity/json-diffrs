@@ -256,7 +256,8 @@ fn summary(layout: &mut Layout, report: &Report, paper: Paper) {
         15.0,
         true,
         INK,
-        "json-diff report".to_owned(),
+        // Neutral on purpose: the report names the files, not the tool.
+        "JSON comparison report".to_owned(),
     );
     flow.y += flow.line;
 
@@ -321,7 +322,7 @@ fn summary(layout: &mut Layout, report: &Report, paper: Paper) {
     }
     paragraph(
         &mut flow,
-        &format!("Made with {} on {}", report.producer, report.generated),
+        &format!("Generated {}", report.generated),
         false,
         GREY,
     );
@@ -587,7 +588,8 @@ fn draw_line_row(
     }
 }
 
-/// "page N of M" and the producer on every page, once the count is known.
+/// "page N of M" and the files compared on every page, once the count is
+/// known.
 fn footers(layout: &mut Layout, report: &Report) {
     let total = layout.pages.len();
     for (index, page) in layout.pages.iter_mut().enumerate() {
@@ -603,13 +605,15 @@ fn footers(layout: &mut Layout, report: &Report) {
             color: GREY,
             text: label,
         });
+        // The left half of the line, beside the page count.
+        let room = ((page.width / 2.0 - MARGIN) / (size * ADVANCE)) as usize;
         page.items.push(Item::Text {
             x: MARGIN,
             y,
             size,
             bold: false,
             color: GREY,
-            text: report.producer.clone(),
+            text: shorten(&report.title, room),
         });
     }
 }
@@ -668,7 +672,7 @@ mod tests {
         );
         let last = layout.pages.last().unwrap();
         assert_eq!((last.width, last.height), (792.0, 612.0));
-        assert!(texts(&layout.pages[0]).contains(&"json-diff report"));
+        assert!(texts(&layout.pages[0]).contains(&"JSON comparison report"));
         assert!(
             texts(&layout.pages[0])
                 .iter()
@@ -748,7 +752,6 @@ mod tests {
             options: DiffOptions::default(),
             ignored: Vec::new(),
             ignored_changes: 0,
-            producer: "json-diff test".into(),
             generated: "now".into(),
             changes: Changes::TextOnly,
             totals: Default::default(),

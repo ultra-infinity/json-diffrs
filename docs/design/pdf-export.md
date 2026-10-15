@@ -23,7 +23,7 @@ Markdown), and choosing which changes to include.
 ### Page 1 onwards: summary (portrait)
 
 ```
-json-diff report                                   13 Oct 2026, 14:05
+JSON comparison report                             13 Oct 2026, 14:05
 ──────────────────────────────────────────────────────────────────────
 Original   configs/v1/app.json   (/home/…/v1/configs/app.json)
 Modified   configs/v2/app.json   (/home/…/v2/configs/app.json)

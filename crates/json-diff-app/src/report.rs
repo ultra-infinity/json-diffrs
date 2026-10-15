@@ -27,8 +27,6 @@ pub struct Report {
     pub ignored: Vec<String>,
     /// Changes left out because their key is ignored.
     pub ignored_changes: usize,
-    /// `json-diff 0.3.0`.
-    pub producer: String,
     /// When the report was made, e.g. `2026-10-13 14:05 UTC`.
     pub generated: String,
     pub changes: Changes,
@@ -166,7 +164,6 @@ pub fn build(state: &AppState, context: Option<usize>, generated: SystemTime) ->
         options: state.options,
         ignored: state.ignored_labels(),
         ignored_changes: diff.ignored_changes,
-        producer: format!("json-diff {}", env!("CARGO_PKG_VERSION")),
         generated: utc_timestamp(generated),
         changes,
         totals,

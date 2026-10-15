@@ -9,6 +9,13 @@ rename it to `## <version> - <date>`; `scripts/release.sh` refuses a version
 with no entry.
 Keep entries to `-` bullets, with `**bold**` and `` `code` `` at most.
 
+## Unreleased
+
+- **Neutral PDF reports:** exported reports no longer name the software that
+  made them. They are titled "JSON comparison report", say only when they
+  were generated, and carry no creator or producer in the PDF's properties,
+  so they can go into any organisation's records as they are.
+
 ## 0.9.0 - 2026-10-15
 
 - **A home of its own:** the web app now lives at **https://json-diffrs.site**.

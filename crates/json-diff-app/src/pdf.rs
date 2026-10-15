@@ -41,11 +41,11 @@ pub fn export(
     let report = report::build(state, context, generated);
     let layout = layout::lay_out(&report, paper);
     let pages = layout.pages.len();
-    let bytes = draw(&layout, &report.title, &report.producer)?;
+    let bytes = draw(&layout, &report.title)?;
     Ok(Pdf { bytes, pages })
 }
 
-fn draw(layout: &Layout, title: &str, producer: &str) -> Result<Vec<u8>, String> {
+fn draw(layout: &Layout, title: &str) -> Result<Vec<u8>, String> {
     let font = |data: &[u8]| {
         Font::new(data.to_vec().into(), 0)
             .ok_or_else(|| "the embedded font is unreadable".to_owned())
@@ -111,13 +111,9 @@ fn draw(layout: &Layout, title: &str, producer: &str) -> Result<Vec<u8>, String>
         outline.push_child(OutlineNode::new(bookmark.title.clone(), destination));
     }
     document.set_outline(outline);
-    // No creation date: the same comparison always gives the same file.
-    document.set_metadata(
-        Metadata::new()
-            .title(format!("json-diff report: {title}"))
-            .creator(producer.to_owned())
-            .producer(producer.to_owned()),
-    );
+    // No creation date: the same comparison always gives the same file. No
+    // creator or producer either: the report names the files, not the tool.
+    document.set_metadata(Metadata::new().title(format!("JSON comparison report: {title}")));
     document
         .finish()
         .map_err(|error| format!("could not write the PDF: {error:?}"))
@@ -180,6 +176,23 @@ mod tests {
         // Whole documents make a longer report.
         let whole = export(&state, None, Paper::Letter, UNIX_EPOCH).unwrap();
         assert!(whole.pages >= pdf.pages);
+    }
+
+    #[test]
+    fn reports_do_not_name_the_software() {
+        let state = crate::report::tests::sample();
+        let report = report::build(&state, Some(DEFAULT_CONTEXT), UNIX_EPOCH);
+        let layout = layout::lay_out(&report, Paper::Letter);
+        for item in layout.pages.iter().flat_map(|page| &page.items) {
+            if let Item::Text { text, .. } = item {
+                assert!(!text.to_lowercase().contains("json-diff"), "{text}");
+            }
+        }
+        // The metadata is stored uncompressed, so it can be searched directly.
+        let pdf = export(&state, Some(DEFAULT_CONTEXT), Paper::Letter, UNIX_EPOCH).unwrap();
+        let raw = String::from_utf8_lossy(&pdf.bytes).to_lowercase();
+        assert!(!raw.contains("json-diff") && !raw.contains("krilla"));
+        assert!(raw.contains("json comparison report"));
     }
 
     /// Writes the sample's report for a look at the layout:
