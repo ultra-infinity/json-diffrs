@@ -123,9 +123,24 @@
               runHook preInstall
               cp -r dist-web $out
               cp ${./LICENSE} $out/LICENSE.txt
+              cp ${./THIRD_PARTY_NOTICES.txt} $out/THIRD_PARTY_NOTICES.txt
               runHook postInstall
             '';
           });
+
+          # The web app as a zip for each release, for anyone to host without
+          # Nix: unzip and serve the folder. Store files are dated 1970,
+          # before zip's 1980 epoch, so they get a fixed date (as for the MSI).
+          web-zip =
+            pkgs.runCommand "json-diff-web-${version}-zip" { nativeBuildInputs = [ pkgs.zip ]; }
+              ''
+                folder=json-diff-web-${version}
+                mkdir -p $out
+                cp -r ${web} $folder
+                chmod -R u+w $folder
+                find $folder -exec touch -d 2000-01-01T00:00:00Z {} +
+                zip -qrX $out/$folder.zip $folder
+              '';
 
           # Tauri on Linux: GTK for the window and dialogs, WebKitGTK for the
           # web view.
@@ -287,7 +302,7 @@
 
           packages = {
             default = json-diff;
-            inherit frontend web;
+            inherit frontend web web-zip;
           }
           // lib.optionalAttrs pkgs.stdenv.isLinux {
             windows = json-diff-windows;

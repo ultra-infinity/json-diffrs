@@ -48,14 +48,43 @@ show up as noise. It runs on Windows and Linux, and in the browser.
 
 ### In your browser
 
-Open **[ultra-infinity.github.io/json-diffrs](https://ultra-infinity.github.io/json-diffrs/)**:
+Open **[json-diffrs.site](https://json-diffrs.site)**:
 nothing to install. Open a folder or file in each half of the explorer, or drop them on
-the page. The comparison runs inside the page, so your files never leave your computer,
-even though browsers word the folder prompt as "upload".
+the page. The comparison runs inside the page, so your files never leave your computer.
+Chrome and Edge ask to let the site *view* the folder; Firefox and Safari can only word
+it as "upload". Either way json-diff first explains that the files stay on your
+computer.
 
 The web app has the same diff, tree view, folder comparison, ignored keys and PDF export,
 which downloads the report. It has no assistant, and it cannot rescan a folder: pick it
 again after its files change. Your settings and ignored keys are kept in that browser.
+
+### Hosting the web app yourself
+
+Each [release](https://github.com/ultra-infinity/json-diffrs/releases/latest) includes
+the web app as `json-diff-web-<version>.zip`: a folder of static files, with nothing to
+install or run on the server.
+
+1. Download the zip and `SHA256SUMS` from the release, and check the download:
+   `sha256sum --check --ignore-missing SHA256SUMS` (or compare the zip's
+   `Get-FileHash` on Windows with the line in `SHA256SUMS`).
+2. Unzip it and copy the `json-diff-web-<version>` folder's contents to any web server:
+   nginx, Apache, IIS, an S3 bucket or similar. It works at a site's root or under any
+   path, such as `https://intranet.example.com/tools/json-diff/`.
+3. Make sure the server sends `.wasm` files as `application/wasm`. Recent nginx does by
+   default; older Apache needs `AddType application/wasm .wasm`, and IIS a MIME map entry
+   for `.wasm`. With the wrong type, browsers refuse to run json-diff's engine.
+4. Serve it over HTTPS. Chrome and Edge only offer their "view files" folder picker on
+   secure pages.
+
+The privacy policy travels with the files: it is in `index.html`, so your copy enforces
+the same rule that it may connect to its own site only. You may also send the same
+policy as an HTTP header ([`ui/src/csp.ts`](ui/src/csp.ts)). The zip also contains the
+license (`LICENSE.txt`) and the licenses of every library json-diff includes
+(`THIRD_PARTY_NOTICES.txt`).
+
+To update, replace the folder with the next release's. To build it from source instead,
+with or without Nix, see [Development](#development).
 
 ### Windows
 
@@ -111,6 +140,26 @@ this).
 cargo build --release -p json-diff --features custom-protocol
 ./target/release/json-diff
 ```
+
+## Privacy and security
+
+**The web app runs entirely in your browser.** Files and folders you open are read and
+compared in the page by json-diff's engine, compiled to WebAssembly; PDFs are made there
+too. Nothing is uploaded: there is no server to upload to. Settings and ignored keys stay
+in that browser's storage. There are no accounts, cookies, analytics or tracking.
+
+**Your browser enforces it.** The page carries a Content Security Policy
+([`ui/src/csp.ts`](ui/src/csp.ts)) that only lets it load files from and connect to its
+own site; a request to anywhere else is refused by the browser. You can read the policy
+in the page's source, in your browser's developer tools, or under **Help → Privacy &
+Security**.
+
+**You can host it yourself,** on any web server, including one inside your organisation:
+see [Hosting the web app yourself](#hosting-the-web-app-yourself).
+
+**The desktop app** reads files from disk and doesn't upload them either. It only goes
+online to check GitHub for updates, and, if you connect the assistant, to send your
+questions and the parts of the documents it reads to the AI provider you chose.
 
 ## Usage
 
@@ -244,6 +293,16 @@ nix develop -c scripts/build-wasm.sh    # again after changing Rust code
 (cd ui && npm run dev:web)
 ```
 
+To build the web app for hosting without Nix, you need Rust with the WebAssembly target,
+the matching `wasm-bindgen` CLI and Node 22:
+
+```sh
+rustup target add wasm32-unknown-unknown
+cargo install wasm-bindgen-cli --version 0.2.121   # must match Cargo.lock exactly
+scripts/build-wasm.sh
+(cd ui && npm ci && npm run build:web)             # the site is in ui/dist-web/
+```
+
 With Nix:
 
 | Command | Builds |
@@ -253,6 +312,7 @@ With Nix:
 | `nix build .#windows` | `json-diff.exe` and `WebView2Loader.dll`, cross-compiled from Linux |
 | `nix build .#msi` | The Windows installer ([`main.wxs`](crates/json-diff/wix/main.wxs)) |
 | `nix build .#web` | The web app: a folder of static files to serve from anywhere |
+| `nix build .#web-zip` | The same, zipped, as attached to each release |
 | `nix flake check` | Both apps, clippy, Rust and frontend tests, and formatting |
 
 [CI](.github/workflows/ci.yml) runs `nix flake check` and builds the Windows installer
@@ -298,12 +358,13 @@ nix develop -c scripts/release.sh
 ```
 
 It builds and signs the installer, writes the `latest.json` the updater reads (with the
-changelog entry as its notes), and asks before tagging the version and publishing the
-GitHub release, whose notes are the same entry.
+changelog entry as its notes), zips the web app for self-hosting, and asks before
+tagging the version and publishing the GitHub release, whose notes are the same entry.
 
 Publishing the release also publishes the web app to GitHub Pages
-([`pages.yml`](.github/workflows/pages.yml)). This needs **Settings → Pages → Source:
-GitHub Actions** set once in the repository.
+([`pages.yml`](.github/workflows/pages.yml)), served at https://json-diffrs.site. Both
+are set once in the repository's **Settings → Pages**: **Source: GitHub Actions**, and
+the custom domain (its DNS records are at Namecheap).
 
 ## License
 

@@ -1,7 +1,22 @@
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
+import { CONTENT_SECURITY_POLICY } from "./src/csp";
 /** `path`, relative to this file, as an absolute path. */
 const here = (path: string) => decodeURIComponent(new URL(path, import.meta.url).pathname);
+
+/** Puts the policy in the built page, as GitHub Pages cannot send it as a
+ *  header. Not in development, where Vite's live reload needs inline code. */
+const contentSecurityPolicy = (): Plugin => ({
+  name: "content-security-policy",
+  apply: "build",
+  transformIndexHtml: () => [
+    {
+      tag: "meta",
+      attrs: { "http-equiv": "Content-Security-Policy", content: CONTENT_SECURITY_POLICY },
+      injectTo: "head-prepend",
+    },
+  ],
+});
 
 // Two builds of one frontend: the desktop app's (`vite build`, loaded by
 // Tauri) and the web app's (`vite build --mode web`, a static site). They
@@ -9,7 +24,7 @@ const here = (path: string) => decodeURIComponent(new URL(path, import.meta.url)
 export default defineConfig(({ mode }) => {
   const web = mode === "web";
   return {
-    plugins: [react()],
+    plugins: [react(), ...(web ? [contentSecurityPolicy()] : [])],
     clearScreen: false,
     // Tauri loads the dev server from this fixed port (see tauri.conf.json).
     server: { port: 1420, strictPort: true },

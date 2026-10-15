@@ -26,8 +26,64 @@ export function isListedJson(path: string): boolean {
   return /\.json$/i.test(path) && path.split("/").every((part) => !part.startsWith("."));
 }
 
-/** Asks for a folder with the browser's picker; `null` if cancelled. */
-export function chooseFolder(): Promise<PickedFolder | null> {
+/** Asks for a folder for `side` (`left` or `right`); `null` if cancelled.
+ *
+ *  Where the browser has the File System Access API (Chrome, Edge), its
+ *  prompt asks to "view files". Elsewhere (Firefox, Safari) the only picker
+ *  is a file input, whose prompt says "upload". Either way a note first says
+ *  that the files stay on this computer, until the user turns it off. Must
+ *  be called from a click, as both pickers are. */
+export function chooseFolder(side: string): Promise<PickedFolder | null> {
+  const access = typeof window.showDirectoryPicker === "function";
+  const choose = access ? () => chooseWithAccess(side) : chooseWithInput;
+  if (explained()) return choose();
+  return explainThenChoose(access, choose);
+}
+
+/** The File System Access API's directory handle, as far as it is used. */
+interface DirectoryHandle {
+  kind: "directory";
+  name: string;
+  values(): AsyncIterable<DirectoryHandle | FileHandle>;
+}
+
+interface FileHandle {
+  kind: "file";
+  name: string;
+  getFile(): Promise<File>;
+}
+
+declare global {
+  interface Window {
+    showDirectoryPicker?: (options?: { id?: string; mode?: "read" }) => Promise<unknown>;
+  }
+}
+
+async function chooseWithAccess(side: string): Promise<PickedFolder | null> {
+  let root: DirectoryHandle;
+  try {
+    // The id makes the browser remember each side's last folder.
+    root = (await window.showDirectoryPicker!({ id: `json-diff-${side}`, mode: "read" })) as DirectoryHandle;
+  } catch (error) {
+    // Cancelled (AbortError), or a folder the browser will not share.
+    if (!(error instanceof DOMException && error.name === "AbortError")) console.warn(error);
+    return null;
+  }
+  const entries: FolderEntry[] = [];
+  const visit = async (folder: DirectoryHandle, prefix: string) => {
+    for await (const child of folder.values()) {
+      if (child.name.startsWith(".")) continue;
+      const path = prefix + child.name;
+      if (child.kind === "directory") await visit(child, `${path}/`);
+      else if (isListedJson(path)) entries.push({ path, file: await child.getFile() });
+    }
+  };
+  await visit(root, "");
+  return { name: root.name, entries };
+}
+
+/** The classic folder picker (`<input webkitdirectory>`). */
+function chooseWithInput(): Promise<PickedFolder | null> {
   return new Promise((resolve) => {
     const input = document.createElement("input");
     input.type = "file";
@@ -45,6 +101,99 @@ export function chooseFolder(): Promise<PickedFolder | null> {
     });
     input.addEventListener("cancel", () => resolve(null));
     input.click();
+  });
+}
+
+/** Set once the user ticks "Don't explain this again". */
+const EXPLAINED_KEY = "json-diff.upload-prompt-explained";
+
+function explained(): boolean {
+  try {
+    return localStorage.getItem(EXPLAINED_KEY) === "yes";
+  } catch {
+    return false;
+  }
+}
+
+/** A note before the picker that the files stay on this computer, worded
+ *  for the browser's prompt (`access`: "view files"; otherwise "upload").
+ *  Its button runs `choose`, within the click the browser needs. */
+function explainThenChoose(
+  access: boolean,
+  choose: () => Promise<PickedFolder | null>,
+): Promise<PickedFolder | null> {
+  return new Promise((resolve) => {
+    const element = <K extends keyof HTMLElementTagNameMap>(tag: K, className = "", text = "") => {
+      const node = document.createElement(tag);
+      node.className = className;
+      node.textContent = text;
+      return node;
+    };
+    const backdrop = element("div", "modal-backdrop");
+    const dialog = element("div", "modal small");
+    dialog.setAttribute("role", "dialog");
+    dialog.setAttribute("aria-label", "Open a folder");
+    const header = element("header", "panel-header");
+    header.append(element("span", "section-title", "Open a folder"));
+    const body = element("div", "export-body");
+    const prompt = access
+      ? "Your browser will now ask whether this site may view the folder\u2019s files. "
+      : "Your browser will now ask whether to \u201cupload\u201d the folder. That is its usual " +
+        "wording for choosing a folder: ";
+    body.append(
+      element(
+        "p",
+        "",
+        `${prompt}json-diff reads the files right here in this page. They stay on your ` +
+          "computer, and nothing is sent anywhere.",
+      ),
+    );
+    const remember = element("label");
+    const checkbox = element("input");
+    checkbox.type = "checkbox";
+    remember.append(checkbox, " Don\u2019t explain this again");
+    const buttons = element("div", "row end");
+    const cancel = element("button", "", "Cancel");
+    const chooseButton = element("button", "primary", "Choose folder\u2026");
+    buttons.append(cancel, chooseButton);
+    body.append(remember, buttons);
+    dialog.append(header, body);
+    backdrop.append(dialog);
+
+    const close = () => {
+      backdrop.remove();
+      window.removeEventListener("keydown", escape, true);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        close();
+        resolve(null);
+      }
+    };
+    cancel.addEventListener("click", () => {
+      close();
+      resolve(null);
+    });
+    backdrop.addEventListener("pointerdown", (event) => {
+      if (event.target === backdrop) {
+        close();
+        resolve(null);
+      }
+    });
+    chooseButton.addEventListener("click", () => {
+      if (checkbox.checked) {
+        try {
+          localStorage.setItem(EXPLAINED_KEY, "yes");
+        } catch {
+          // Storage is off: the note shows again next time.
+        }
+      }
+      close();
+      void choose().then(resolve, () => resolve(null));
+    });
+    window.addEventListener("keydown", escape, true);
+    document.body.append(backdrop);
+    chooseButton.focus();
   });
 }
 

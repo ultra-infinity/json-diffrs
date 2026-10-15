@@ -9,6 +9,28 @@ rename it to `## <version> - <date>`; `scripts/release.sh` refuses a version
 with no entry.
 Keep entries to `-` bullets, with `**bold**` and `` `code` `` at most.
 
+## 0.9.0 - 2026-10-15
+
+- **A home of its own:** the web app now lives at **https://json-diffrs.site**.
+  The old GitHub address forwards there.
+- **Opening folders on the web, without the scare:** in Chrome and Edge the
+  browser now asks to *view* the folder's files instead of to "upload" them
+  (Firefox and Safari can only say "upload"). Before the browser asks,
+  json-diff explains that the files stay on your computer and nothing is
+  sent anywhere. The explorer also says that files are read in the browser
+  and never uploaded.
+- **Privacy you can check:** the web app now carries a Content Security
+  Policy, a rule the browser enforces that lets the page load from and
+  connect to its own site only, so nothing it reads can be sent anywhere.
+  **Help → Privacy & Security** explains where your files go (nowhere) and
+  shows the policy.
+- **Host the web app yourself:** each release now includes
+  `json-diff-web-<version>.zip`, the web app as a folder of static files to
+  put on any web server, such as one inside your organisation. The README
+  explains how.
+- If the browser cannot read a picked folder, the status bar now says so
+  instead of nothing happening.
+
 ## 0.8.0 - 2026-10-15
 
 - **Folders on the web:** the web app can now compare folders. Pick one with

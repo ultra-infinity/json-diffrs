@@ -80,7 +80,7 @@ impl App {
         state.show_agent = false;
         samples::show(
             &mut state,
-            "Showing a sample. Open or drop JSON files or folders to compare your own.",
+            "Showing a sample. Open or drop JSON files or folders to compare your own: they stay on your computer.",
         );
         App {
             state,
@@ -133,6 +133,13 @@ impl App {
         self.state
             .open_folder_contents(parse_side(side)?, name, files);
         Ok(self.view())
+    }
+
+    /// Shows `message` as an error in the status bar, e.g. a folder the
+    /// browser could not read.
+    pub fn report_error(&mut self, message: &str) -> String {
+        self.state.set_status(message, true);
+        self.view()
     }
 
     /// The key under 1-based `line` of `side`, as JSON (`null` if none).

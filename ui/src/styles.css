@@ -1235,3 +1235,24 @@ body.busy,
 body.busy * {
   cursor: progress !important;
 }
+
+.local-note {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.privacy h3:first-child {
+  margin-top: 4px;
+}
+
+.privacy .policy {
+  margin: 6px 0;
+  padding: 8px 10px;
+  border-radius: 4px;
+  background: var(--bg);
+  font-size: 12px;
+  white-space: pre-wrap;
+  user-select: text;
+}

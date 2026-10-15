@@ -11,6 +11,7 @@ declare module "#wasm" {
     run(name: string, args: string): string;
     edit_text(side: string, text: string): string;
     open_text(side: string, name: string, text: string): string;
+    report_error(message: string): string;
     /** `files` is JSON: `[[relative path, text], …]`. */
     open_folder(side: string, name: string, files: string): string;
     key_at(side: string, line: number): string;

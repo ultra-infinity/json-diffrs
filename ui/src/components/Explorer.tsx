@@ -73,6 +73,11 @@ function Half({ view, run, side }: { view: View; run: Run; side: Side }) {
             />
           )}
           <p className="weak small-text">You can also drop a {WEB ? "folder or file" : "folder"} here.</p>
+          {WEB && (
+            <p className="weak small-text local-note">
+              <span className="codicon codicon-lock" /> Files are read in your browser and never uploaded.
+            </p>
+          )}
         </div>
       )}
     </section>

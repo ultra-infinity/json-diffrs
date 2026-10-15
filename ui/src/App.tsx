@@ -28,6 +28,7 @@ import { EditView } from "./components/EditView";
 import { Explorer } from "./components/Explorer";
 import { ExportDialog, ExportedBar } from "./components/ExportDialog";
 import { LicensesDialog } from "./components/LicensesDialog";
+import { PrivacyDialog } from "./components/PrivacyDialog";
 import { ContextMenu, MenuBar, type MenuEntry } from "./components/Menu";
 import { loadUiSettings, uiSettings, updateUiSettings } from "./uiSettings";
 import { UpdateBanner, useUpdates, type Updates } from "./components/UpdateBanner";
@@ -38,6 +39,8 @@ export function App() {
   const assistant = useAssistant();
   const updates = useUpdates();
   const [licensesOpen, setLicensesOpen] = useState(false);
+  const [privacyOpen, setPrivacyOpen] = useState(false);
+  const closePrivacy = useCallback(() => setPrivacyOpen(false), []);
   const closeLicenses = useCallback(() => setLicensesOpen(false), []);
   const [exportOpen, setExportOpen] = useState(false);
   const closeExport = useCallback(() => setExportOpen(false), []);
@@ -108,6 +111,7 @@ export function App() {
       <MenuBar
         menus={menus(view, run, updates, {
           showLicenses: () => setLicensesOpen(true),
+          showPrivacy: () => setPrivacyOpen(true),
           exportPdf: () => setExportOpen(true),
           whatsNew: showAllNotes,
         })}
@@ -135,6 +139,7 @@ export function App() {
       </div>
       <StatusBar view={view} assistant={assistant} />
       {licensesOpen && <LicensesDialog onClose={closeLicenses} />}
+      {privacyOpen && <PrivacyDialog onClose={closePrivacy} />}
       {notes && <WhatsNewDialog {...notes} onClose={closeNotes} />}
       {exportOpen && <ExportDialog onClose={closeExport} onView={setView} onDone={setExported} />}
     </div>
@@ -145,7 +150,7 @@ function menus(
   view: View,
   run: Run,
   updates: Updates,
-  dialogs: { showLicenses: () => void; exportPdf: () => void; whatsNew: () => void },
+  dialogs: { showLicenses: () => void; showPrivacy: () => void; exportPdf: () => void; whatsNew: () => void },
 ): { title: string; entries: MenuEntry[] }[] {
   const sides: Side[] = ["left", "right"];
   const title = (side: Side) => (side === "left" ? "Original" : "Modified");
@@ -217,6 +222,7 @@ function menus(
       entries: [
         { label: "What's New…", action: dialogs.whatsNew },
         ...desktop({ label: "Check for Updates…", action: () => updates.check(true) }),
+        { label: "Privacy & Security…", action: dialogs.showPrivacy },
         { label: "Licenses…", action: dialogs.showLicenses },
         // Where the code of the copy running in the page comes from.
         ...(WEB ? [{ label: "Source Code…", action: () => void openRelease(SOURCE_URL) }] : []),

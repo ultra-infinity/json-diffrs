@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Builds, signs and publishes a json-diff release, including the latest.json
-# the in-app updater reads:
+# Builds, signs and publishes a json-diff release: the Windows installer, the
+# latest.json the in-app updater reads, and the web app as a zip for anyone
+# who wants to host it themselves:
 #
 #   nix develop -c scripts/release.sh
 #
@@ -57,7 +58,12 @@ cat > dist/latest.json << JSON
   }
 }
 JSON
-(cd dist && sha256sum "$msi" > SHA256SUMS)
+# The web app, ready to unzip and serve (README > Hosting the web app).
+web_zip="json-diff-web-$version.zip"
+nix build .#web-zip -o dist/web-zip
+cp "dist/web-zip/$web_zip" dist/
+rm dist/web-zip
+(cd dist && sha256sum "$msi" "$web_zip" > SHA256SUMS)
 
 echo
 echo "Ready to release $tag:"
@@ -70,4 +76,4 @@ fi
 git tag -a "$tag" -m "json-diff $version"
 git push origin "$tag"
 gh release create "$tag" -R "$repo" --title "json-diff $version" --notes-file dist/notes.md \
-  "dist/$msi" dist/latest.json dist/SHA256SUMS
+  "dist/$msi" "dist/$web_zip" dist/latest.json dist/SHA256SUMS

@@ -59,12 +59,21 @@ async function openFile(run: Parameters<Backend["pickFile"]>[0], side: string, f
   await run("open_file", { side, name: file.name, text: await file.text() });
 }
 
-/** Opens a picked or dropped folder on `side`, once its files are read. */
-async function openFolder(run: Parameters<Backend["pickFile"]>[0], side: string, folder: PickedFolder) {
-  document.body.classList.add("busy");
+/** Opens a folder on `side` once `read` has gathered and read its files;
+ *  a failure (a folder moved or unreadable) is shown in the status bar. */
+async function openFolder(run: Parameters<Backend["pickFile"]>[0], side: string, read: () => Promise<PickedFolder | null>) {
   try {
+    // Called right away: the browser only shows a picker during a click.
+    const folder = await read();
+    if (!folder) return;
+    document.body.classList.add("busy");
     const files = await readTexts(folder.entries);
     await run("open_folder_files", { side, name: folder.name, files });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    await run("report_error", {
+      message: `Could not read that folder (${reason}). Try dragging it onto the window instead.`,
+    });
   } finally {
     document.body.classList.remove("busy");
   }
@@ -94,6 +103,9 @@ const backend: Backend = {
         const opened = view(app.open_text(String(args.side), String(args.name), String(args.text)));
         return { result: null, error: null, view: opened } satisfies RunOutput;
       }
+      if (name === "report_error") {
+        return { result: null, error: null, view: view(app.report_error(String(args.message))) } satisfies RunOutput;
+      }
       if (name === "open_folder_files") {
         const files = JSON.stringify(args.files);
         const opened = view(app.open_folder(String(args.side), String(args.name), files));
@@ -113,10 +125,7 @@ const backend: Backend = {
     const file = await chooseFile();
     if (file) await openFile(run, side, file);
   },
-  pickFolder: async (run, side) => {
-    const folder = await chooseFolder();
-    if (folder) await openFolder(run, side, folder);
-  },
+  pickFolder: (run, side) => openFolder(run, side, () => chooseFolder(side)),
 
   onDrop: (sideAt, run) => {
     const over = (event: DragEvent) => event.preventDefault();
@@ -131,7 +140,7 @@ const backend: Backend = {
         const sides = folders.length >= 2 ? ["left", "right"] : [sideAt(event.clientX, event.clientY)];
         void (async () => {
           for (const [index, side] of sides.entries()) {
-            await openFolder(run, side, await readDroppedFolder(folders[index]));
+            await openFolder(run, side, () => readDroppedFolder(folders[index]));
           }
         })();
         return;
