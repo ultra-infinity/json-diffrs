@@ -1,6 +1,6 @@
 [package]
 name = "json-diff-core"
-version = "0.9.1"
+version = "0.9.2"
 edition = "2024"
 description = "Structural and side-by-side JSON diffing, addressed by JSON pointer"
 authors.workspace = true
