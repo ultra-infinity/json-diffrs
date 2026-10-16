@@ -95,8 +95,11 @@ export function DiffView({ view, run }: { view: View; run: Run }) {
         selectionHighlight: false,
         matchBrackets: "never",
         contextmenu: false,
-        overviewRulerLanes: 1,
+        // No change marks beside the scrollbar: the colours and ribbons show
+        // the changes already (issue #2).
+        overviewRulerLanes: 0,
         overviewRulerBorder: false,
+        hideCursorInOverviewRuler: true,
         lineNumbersMinChars: 4,
         lineDecorationsWidth: 14,
         fontFamily: FONT_FAMILY,
@@ -357,10 +360,6 @@ function render(pane: Pane, side: SideView, current: [number, number] | undefine
         className: classes.join(" "),
         linesDecorationsClassName: `sign sign-${kind}`,
         marginClassName: `margin-${kind}`,
-        overviewRuler: {
-          color: kind === "add" ? "#73c991" : "#f14c4c",
-          position: monaco.editor.OverviewRulerLane.Full,
-        },
       },
     });
   }

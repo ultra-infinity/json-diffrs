@@ -9,6 +9,11 @@ rename it to `## <version> - <date>`; `scripts/release.sh` refuses a version
 with no entry.
 Keep entries to `-` bullets, with `**bold**` and `` `code` `` at most.
 
+## Unreleased
+
+- The diff no longer shows red and green marks beside its scrollbars. They
+  only repeated what the line colours and ribbons already show.
+
 ## 0.9.1 - 2026-10-15
 
 - **Neutral PDF reports:** exported reports no longer name the software that
